@@ -10,7 +10,7 @@ import aiohttp
 import feedparser
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_utc_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -23,7 +23,6 @@ from .const import (
     CONF_RSS_FEEDS,
     DEFAULT_QUALITY,
     DOMAIN,
-    SCAN_INTERVAL,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
@@ -286,8 +285,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Saving seen URLs failed: %s", e)
         coordinator.async_set_updated_data(feed_stats)
 
-    # Use HA's track_time_interval (cron-style, robust, survives reloads)
-    remove = async_track_time_interval(hass, _poll_feeds, SCAN_INTERVAL)
+    # Run once right away, then at the top of every hour (cron: minute=0, second=0)
+    hass.async_create_task(_poll_feeds())
+    remove = async_track_utc_time_change(hass, _poll_feeds, minute=0, second=0)
     entry.async_on_unload(remove)
 
     # Reload when options change (add/remove feeds) so sensor list stays in sync
