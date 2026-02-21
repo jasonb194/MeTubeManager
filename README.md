@@ -58,7 +58,15 @@ To change any of these, open the integration card for that channel and click **C
 
 ## Icon
 
-The repo includes `custom_components/metube_manager/icon.svg` (play button + download arrow on a red background). Home Assistant only loads integration icons from [brands.home-assistant.io](https://github.com/home-assistant/brands), not from your repo. To show this icon in **Settings → Integrations**, add it to the [brands repository](https://github.com/home-assistant/brands) once: under `custom_integrations/metube_manager/` add `icon.png` (256×256). Export the SVG to PNG with [Inkscape](https://inkscape.org/), [GIMP](https://www.gimp.org/), or any SVG-to-PNG tool. After your PR is merged, the icon appears in HA.
+**HACS does not use `icon.png` from your repo.** Both HACS and Home Assistant load integration icons only from [brands.home-assistant.io](https://github.com/home-assistant/brands) (using the integration domain). So the icon will not show in HACS or in **Settings → Integrations** until it is in the brands repository.
+
+To fix it:
+
+1. Open the [Home Assistant brands repository](https://github.com/home-assistant/brands) and add a new folder `custom_integrations/metube_manager/`.
+2. Add your **`icon.png`** (the one in the root of this repo is fine; it should be 256×256 PNG) as `custom_integrations/metube_manager/icon.png` in that repo.
+3. Submit a pull request. Once it is merged, the icon will appear in both HACS and **Settings → Integrations**.
+
+The repo also has `custom_components/metube_manager/icon.svg` as the source; you can keep `icon.png` in the repo root for reference.
 
 ## Requirements
 
