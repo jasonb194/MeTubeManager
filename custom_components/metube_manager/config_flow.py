@@ -302,7 +302,7 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> "MeTubeManagerOptionsFlow":
         """Return the options flow."""
-        return MeTubeManagerOptionsFlow(config_entry)
+        return MeTubeManagerOptionsFlow(config_entry.entry_id)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -361,9 +361,14 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
     """Handle MeTube Manager options."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow. Store entry in _config_entry (base class has read-only config_entry)."""
-        self._config_entry = config_entry
+    def __init__(self, entry_id: str) -> None:
+        """Initialize options flow. Store entry_id only (base class config_entry is read-only)."""
+        self._entry_id = entry_id
+
+    @property
+    def _config_entry(self) -> config_entries.ConfigEntry | None:
+        """Look up the config entry by id."""
+        return self.hass.config_entries.async_get_entry(self._entry_id)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -415,7 +420,10 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
 
     def _current_feed_names_and_backlogs(self) -> tuple[dict[str, str], dict[str, str]]:
         """Return (feed URL -> name, feed URL -> backlog playlist URL) from current config."""
-        options = self._config_entry.options or {}
+        entry = self._config_entry
+        if not entry:
+            return {}, {}
+        options = entry.options or {}
         feeds_list = options.get(CONF_RSS_FEEDS)
         if not isinstance(feeds_list, list):
             feeds_list = []
@@ -436,8 +444,12 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
 
     def _schema(self) -> vol.Schema:
         """Build options schema. Feeds: 'Name | RSS URL' or 'Name | RSS URL | Backlog playlist URL'."""
-        data = self._config_entry.data or {}
-        options = self._config_entry.options or {}
+        entry = self._config_entry
+        if not entry:
+            data, options = {}, {}
+        else:
+            data = entry.data or {}
+            options = entry.options or {}
         url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
         quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
         quality_options_values = [v for v, _ in QUALITY_OPTIONS]
