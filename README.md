@@ -33,7 +33,7 @@ A **Home Assistant** custom integration that watches RSS feeds and sends new vid
 ## Finding the integration
 
 - **Add Integration**: Go to **Settings → Devices & services → Add integration** and search for **MeTube Manager** (with a space). If it doesn’t appear, the custom component may not be loaded: check that `custom_components/metube_manager` is in your config folder and restart Home Assistant.
-- **After setup**: The integration appears as a card under **Settings → Devices & services**. Click the card to see **Configure** and the **Status** sensor.
+- **After setup**: The integration appears as a card under **Settings → Devices & services**. Open the **Integrations** tab, then search or scroll for **MeTube Manager**. Click the card to see **Configure** and the **Status** sensor (and any feed sensors).
 
 ## Where is the UI?
 

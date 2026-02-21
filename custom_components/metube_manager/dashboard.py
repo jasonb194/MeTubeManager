@@ -6,10 +6,8 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
-
-from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,53 +26,39 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str) -> None:
     data = await dashboards_store.async_load() or {}
     items = list(data.get("items") or [])
 
-    if any(item.get("id") == DASHBOARD_URL_PATH or item.get("url_path") == DASHBOARD_URL_PATH for item in items):
-        return
+    if not any(item.get("id") == DASHBOARD_URL_PATH or item.get("url_path") == DASHBOARD_URL_PATH for item in items):
+        new_item = {
+            "id": DASHBOARD_URL_PATH,
+            "url_path": DASHBOARD_URL_PATH,
+            "title": DASHBOARD_TITLE,
+            "icon": DASHBOARD_ICON,
+            "show_in_sidebar": True,
+            "require_admin": False,
+        }
+        items.append(new_item)
+        await dashboards_store.async_save({"items": items})
 
-    new_item = {
-        "id": DASHBOARD_URL_PATH,
-        "url_path": DASHBOARD_URL_PATH,
+    # Always update view config: fix broken device_id format and keep entity list in sync when feeds change
+    # Build entities list from entity registry (entity IDs only; Lovelace entities card doesn't support device_id)
+    ent_reg = er.async_get(hass)
+    entity_ids: list[str] = []
+    for entry in er.async_entries_for_config_entry(ent_reg, entry_id):
+        if entry.entity_id:
+            entity_ids.append(entry.entity_id)
+    if not entity_ids:
+        entity_ids = ["sensor.metube_manager_status"]
+
+    view_config: dict[str, Any] = {
         "title": DASHBOARD_TITLE,
-        "icon": DASHBOARD_ICON,
-        "show_in_sidebar": True,
-        "require_admin": False,
+        "path": DASHBOARD_URL_PATH,
+        "cards": [
+            {
+                "type": "entities",
+                "title": "Feeds & status",
+                "entities": entity_ids,
+            }
+        ],
     }
-    items.append(new_item)
-    await dashboards_store.async_save({"items": items})
-
-    dev_reg = dr.async_get(hass)
-    device_id = None
-    for dev in dr.async_entries_for_config_entry(dev_reg, entry_id):
-        device_id = dev.id
-        break
-
-    if device_id:
-        view_config: dict[str, Any] = {
-            "title": DASHBOARD_TITLE,
-            "path": DASHBOARD_URL_PATH,
-            "cards": [
-                {
-                    "type": "entities",
-                    "title": "Feeds & status",
-                    "entities": [
-                        {"entity": "sensor.metube_manager_status"},
-                        {"device_id": device_id},
-                    ],
-                }
-            ],
-        }
-    else:
-        view_config = {
-            "title": DASHBOARD_TITLE,
-            "path": DASHBOARD_URL_PATH,
-            "cards": [
-                {
-                    "type": "entities",
-                    "title": "Feeds & status",
-                    "entities": [{"entity": "sensor.metube_manager_status"}],
-                }
-            ],
-        }
 
     config_store = Store(
         hass,

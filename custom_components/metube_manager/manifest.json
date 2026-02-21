@@ -5,7 +5,7 @@
   "config_flow": true,
   "dependencies": ["lovelace"],
   "documentation": "https://github.com/yourusername/MeTubeManager",
-  "integration_type": "helper",
+  "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/yourusername/MeTubeManager/issues",
   "requirements": ["feedparser>=6.0.0", "aiohttp>=3.8.0", "yt-dlp>=2024.1.0"],
