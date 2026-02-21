@@ -30,6 +30,17 @@ A **Home Assistant** custom integration that watches RSS feeds and sends new vid
 5. On the next step, add RSS feed URLs (one per line). You can leave this empty and add feeds later via the integration’s **Configure**.
 6. Finish the setup.
 
+## Finding the integration
+
+- **Add Integration**: Go to **Settings → Devices & services → Add integration** and search for **MeTube Manager** (with a space). If it doesn’t appear, the custom component may not be loaded: check that `custom_components/metube_manager` is in your config folder and restart Home Assistant.
+- **After setup**: The integration appears as a card under **Settings → Devices & services**. Click the card to see **Configure** and the **Status** sensor.
+
+## Where is the UI?
+
+- **Configure (main UI)**: On the integration card, click **Configure**. The form that opens is the main UI: MeTube URL, quality, and a **text area for channels/feeds**. Paste one channel or feed per line (e.g. `@MrBeast | Videos`), then click **Submit**.
+- **MeTube Manager dashboard**: The integration automatically creates a **Lovelace dashboard** named **MeTube Manager** that shows your Status sensor and all feed sensors (videos sent, last fetched, etc.) in one place. Open it from the **sidebar** (MeTube Manager) or go to `/metube-manager`. If it doesn't appear right away, refresh the page or restart Home Assistant.
+- **Feeds and status**: Open the integration card to see **Configure** and the **entity list**. You get one **Status** sensor (number of feeds) plus **one sensor per feed** (e.g. “MrBeast”) showing **videos sent** and attributes **last_fetched** and feed URL. Add or remove feeds in Configure (add a line to add, delete a line to remove); after you save, the integration reloads and the sensor list updates.
+
 ## Configuration
 
 - **MeTube base URL**: Full URL to your MeTube instance (no trailing slash). Must be reachable from Home Assistant.

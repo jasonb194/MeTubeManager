@@ -3,7 +3,7 @@
   "name": "MeTube Manager",
   "codeowners": [],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["lovelace"],
   "documentation": "https://github.com/yourusername/MeTubeManager",
   "integration_type": "helper",
   "iot_class": "local_polling",

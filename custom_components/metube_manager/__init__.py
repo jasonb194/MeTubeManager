@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -11,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     CONF_BACKLOG_PLAYLIST_URL,
@@ -66,6 +68,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeTube Manager from a config entry."""
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}_{STORAGE_KEY}")
 
+    async def _load_feed_stats() -> dict[str, Any]:
+        """Load feed_stats from store for coordinator."""
+        data = await store.async_load() or {}
+        return data.get("feed_stats") or {}
+
+    coordinator = DataUpdateCoordinator(
+        hass,
+        logging.getLogger(__name__),
+        name=DOMAIN,
+        update_method=_load_feed_stats,
+    )
+    await coordinator.async_config_entry_first_refresh()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    def _update_feed_stats(
+        stats: dict[str, dict[str, Any]], feed_url: str, sent_count: int = 0
+    ) -> None:
+        """Update feed_stats for a feed with last_fetched and total_sent."""
+        now = datetime.now(timezone.utc).isoformat()
+        prev = stats.get(feed_url) or {}
+        total = (prev.get("total_sent") or 0) + sent_count
+        stats[feed_url] = {"last_fetched": now, "total_sent": total}
+
     def _normalize_feed(f: Any) -> dict[str, Any] | None:
         """Return {url, name, backlog_playlist_url?} from feed item (dict or legacy string)."""
         if isinstance(f, dict):
@@ -97,10 +122,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             seen_data = await store.async_load() or {}
             seen: set[str] = set(seen_data.get("urls", []) or [])
             backlog_done: set[str] = set(seen_data.get("backlog_done", []) or [])
+            feed_stats: dict[str, dict[str, Any]] = dict(seen_data.get("feed_stats") or {})
         except Exception as e:
             _LOGGER.warning("Loading seen URLs failed: %s", e)
             seen = set()
             backlog_done = set()
+            feed_stats = {}
 
         add_url = base_url.rstrip("/") + "/add"
 
@@ -111,6 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 backlog_playlist = (feed.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
 
                 # One-time backlog: fetch full playlist via yt-dlp and send to MeTube
+                backlog_sent = 0
                 if backlog_playlist and feed_url not in backlog_done:
                     _LOGGER.info("Fetching backlog playlist for %s: %s", feed_name, backlog_playlist)
                     try:
@@ -133,6 +161,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 ) as add_resp:
                                     if add_resp.status in (200, 201):
                                         _LOGGER.info("Sent to MeTube (backlog): %s", link)
+                                        backlog_sent += 1
                                     else:
                                         body = await add_resp.text()
                                         _LOGGER.warning(
@@ -146,10 +175,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         backlog_done.add(feed_url)
                     except Exception as e:
                         _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
+                _update_feed_stats(feed_stats, feed_url, backlog_sent)
 
             for feed in feeds:
                 feed_url = feed["url"]
                 feed_name = feed.get("name") or feed_url
+                rss_sent = 0
                 if not feed_url:
                     continue
                 try:
@@ -165,23 +196,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             feed_url,
                             resp.status,
                         )
+                        _update_feed_stats(feed_stats, feed_url, 0)
                         continue
                     text = await resp.text()
                 except Exception as e:
                     _LOGGER.warning("Failed to fetch RSS %s (%s): %s", feed_name, feed_url, e)
+                    _update_feed_stats(feed_stats, feed_url, 0)
                     continue
 
                 try:
                     parsed = await hass.async_add_executor_job(feedparser.parse, text)
                 except Exception as e:
                     _LOGGER.warning("Failed to parse RSS %s (%s): %s", feed_name, feed_url, e)
+                    _update_feed_stats(feed_stats, feed_url, 0)
                     continue
 
                 for item in getattr(parsed, "entries", []) or []:
                     link = (item.get("link") or "").strip()
                     if not link or link in seen:
                         continue
-                    # Optional: only treat known video domains if you want
                     seen.add(link)
 
                     try:
@@ -196,6 +229,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ) as add_resp:
                             if add_resp.status in (200, 201):
                                 _LOGGER.info("Sent to MeTube: %s", link)
+                                rss_sent += 1
                             else:
                                 body = await add_resp.text()
                                 _LOGGER.warning(
@@ -206,24 +240,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 )
                     except Exception as e:
                         _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                _update_feed_stats(feed_stats, feed_url, rss_sent)
 
         try:
             await store.async_save({
                 "urls": list(seen),
                 "backlog_done": list(backlog_done),
+                "feed_stats": feed_stats,
             })
         except Exception as e:
             _LOGGER.warning("Saving seen URLs failed: %s", e)
+        coordinator.async_set_updated_data(feed_stats)
 
     # Use HA's track_time_interval (cron-style, robust, survives reloads)
     remove = async_track_time_interval(hass, _poll_feeds, SCAN_INTERVAL)
     entry.async_on_unload(remove)
+
+    # Reload when options change (add/remove feeds) so sensor list stays in sync
+    entry.async_on_unload(entry.add_update_listener(lambda _hass, _entry: _hass.config_entries.async_reload(_entry.entry_id)))
+
+    # Set up sensor so the integration has a visible entity (feed count, scan interval)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+
+    # Create MeTube Manager dashboard (feeds and stats) in Lovelace
+    try:
+        from .dashboard import ensure_dashboard
+        await ensure_dashboard(hass, entry.entry_id)
+    except Exception as e:
+        _LOGGER.warning("Could not create MeTube Manager dashboard: %s", e)
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry; interval listener is removed via async_on_unload."""
-    return True
+    """Unload a config entry; remove interval listener and sensors."""
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
