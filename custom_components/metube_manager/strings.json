@@ -14,10 +14,10 @@
         }
       },
       "rss": {
-        "title": "RSS feeds",
-        "description": "Enter one RSS feed URL per line. New videos from these feeds will be sent to MeTube every hour.",
+        "title": "YouTube channels & feeds",
+        "description": "One per line. YouTube: channel URL or @handle, then feed type (All, Videos, Shorts, Live), then optional backlog. Example: @MrBeast | Videos. Or manual: Name | RSS URL | Backlog.",
         "data": {
-          "rss_feeds": "RSS feed URLs (one per line)"
+          "rss_feeds": "Channels: @handle | All/Videos/Shorts/Live | backlog, or Name | RSS URL | backlog"
         }
       }
     },
@@ -34,11 +34,11 @@
     "step": {
       "init": {
         "title": "MeTube Manager options",
-        "description": "Update your MeTube URL and/or RSS feeds. One feed URL per line.",
+        "description": "YouTube: 'channel or @handle | All/Videos/Shorts/Live | optional Backlog'. Manual: 'Name | RSS URL | optional Backlog'.",
         "data": {
           "metube_url": "MeTube base URL",
           "quality": "Download quality",
-          "rss_feeds": "RSS feed URLs (one per line)"
+          "rss_feeds": "Channels: @handle | feed_type | backlog, or Name | RSS URL | backlog"
         }
       }
     }
