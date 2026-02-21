@@ -6,17 +6,20 @@ import re
 from typing import Any
 
 import aiohttp
-import feedparser
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_BACKLOG_PLAYLIST_URL,
+    CONF_CHANNEL_ID,
+    CONF_CHANNEL_NAME,
     CONF_FEED_NAME,
     CONF_FEED_URL,
+    CONF_FETCH_BACKLOG,
     CONF_METUBE_URL,
     CONF_QUALITY,
     CONF_RSS_FEEDS,
@@ -51,11 +54,6 @@ def _validate_metube_url(url: str) -> bool:
         return False
 
 
-def _parse_rss_feeds(raw: str) -> list[str]:
-    """Parse one URL per line into a list, skipping empty lines."""
-    return [line.strip() for line in (raw or "").strip().splitlines() if line.strip()]
-
-
 def _youtube_feed_url(channel_id: str, feed_type: str) -> str:
     """Build YouTube RSS feed URL from channel_id and feed type (all/videos/shorts/live)."""
     feed_type = (feed_type or YOUTUBE_FEED_ALL).lower().strip()
@@ -71,6 +69,30 @@ def _youtube_feed_url(channel_id: str, feed_type: str) -> str:
     }.get(feed_type, "UULF")
     playlist_id = prefix + channel_id[2:] if len(channel_id) > 2 else channel_id
     return f"https://www.youtube.com/feeds/videos.xml?playlist_id={playlist_id}"
+
+
+def _youtube_backlog_playlist_url(channel_id: str, feed_type: str) -> str:
+    """Generate YouTube backlog playlist URL from channel_id and feed type (for backlog checkbox)."""
+    feed_type = (feed_type or YOUTUBE_FEED_ALL).lower().strip()
+    if feed_type not in YOUTUBE_FEED_TYPES:
+        feed_type = YOUTUBE_FEED_ALL
+    # All = uploads playlist UU+channel_id[2:]; Videos/Shorts/Live = same as feed playlist
+    if feed_type == YOUTUBE_FEED_ALL:
+        prefix = "UU"
+    else:
+        prefix = {
+            YOUTUBE_FEED_VIDEOS: "UULF",
+            YOUTUBE_FEED_SHORTS: "UUSH",
+            YOUTUBE_FEED_LIVE: "UULV",
+        }.get(feed_type, "UULF")
+    playlist_id = prefix + channel_id[2:] if len(channel_id) > 2 else channel_id
+    return f"https://www.youtube.com/playlist?list={playlist_id}"
+
+
+def _is_backlog_checkbox(val: str) -> bool:
+    """True if the third column is a backlog checkbox (not a custom URL)."""
+    v = (val or "").strip().lower()
+    return v in ("backlog", "yes", "1", "true", "on")
 
 
 def _is_youtube_feed_type(s: str) -> bool:
@@ -148,83 +170,52 @@ async def _resolve_youtube_channel(hass: HomeAssistant, channel_input: str) -> t
     return await hass.async_add_executor_job(_resolve_youtube_channel_sync, url)
 
 
-def _feed_title_from_parsed(parsed: Any) -> str:
-    """Extract channel/feed display name from parsed feed."""
-    try:
-        feed = getattr(parsed, "feed", {}) or {}
-        title = (feed.get("title") or "").strip()
-        if title:
-            return title
-        author = feed.get("author")
-        if isinstance(author, str) and author.strip():
-            return author.strip()
-        authors = feed.get("authors") or []
-        if authors and isinstance(authors[0], dict) and authors[0].get("name"):
-            return str(authors[0]["name"]).strip()
-    except Exception:
-        pass
-    return ""
-
-
-async def _fetch_feed_name(hass: HomeAssistant, feed_url: str) -> str:
-    """Fetch an RSS feed and return its title (channel name)."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                feed_url,
-                timeout=aiohttp.ClientTimeout(total=15),
-                headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
-            ) as resp:
-                if resp.status != 200:
-                    return ""
-                text = await resp.text()
-        parsed = await hass.async_add_executor_job(feedparser.parse, text)
-        name = _feed_title_from_parsed(parsed)
-        return name or feed_url
-    except Exception:
-        return feed_url
-
-
-async def _fetch_feed_names(hass: HomeAssistant, urls: list[str]) -> list[dict[str, str]]:
-    """Fetch each feed URL and return list of {url, name}."""
-    result: list[dict[str, str]] = []
-    for url in urls:
-        if not url.strip():
-            continue
-        name = await _fetch_feed_name(hass, url)
-        result.append({CONF_FEED_URL: url.strip(), CONF_FEED_NAME: name or url.strip()})
-    return result
+def _line_contains_url(line: str) -> bool:
+    """True if the line contains an http(s) URL (we only allow channel names, not manual RSS)."""
+    return "http://" in line or "https://" in line
 
 
 def _parse_feeds_text_lines(raw: str) -> list[tuple[bool, str, str, str]]:
-    """Parse lines into (is_youtube, part1, part2, backlog).
-    YouTube: (True, channel_ref, feed_type, backlog). Manual: (False, name, rss_url, backlog).
+    """Parse lines into (is_youtube, channel_ref, feed_type, backlog). Only YouTube channel names allowed.
+    Format: channel_name   or   channel_name | backlog   or   channel_name | feed_type | backlog
+    Default feed type is Videos. Lines containing URLs are skipped (channel names only).
     """
     out: list[tuple[bool, str, str, str]] = []
+    default_feed_type = YOUTUBE_FEED_VIDEOS
     for line in (raw or "").strip().splitlines():
         line = line.strip()
         if not line:
             continue
+        if _line_contains_url(line):
+            continue
         parts = [p.strip() for p in line.split(" | ")]
-        if len(parts) >= 3:
-            backlog = " | ".join(parts[2:]).strip()
-            first, second = parts[0], parts[1]
-        elif len(parts) == 2:
-            backlog = ""
-            first, second = parts[0], parts[1]
-        else:
-            first, second, backlog = parts[0], "", ""
+        first = parts[0] if parts else ""
+        second = parts[1] if len(parts) > 1 else ""
+        third = " | ".join(parts[2:]).strip() if len(parts) > 2 else ""
 
-        if _looks_like_youtube_channel(first) and _is_youtube_feed_type(second):
-            out.append((True, first, second, backlog))
-        elif second and (second.startswith("http://") or second.startswith("https://")):
-            out.append((False, first, second, backlog))
-        elif first and (first.startswith("http://") or first.startswith("https://")):
-            out.append((False, "", first, backlog))
-        elif _looks_like_youtube_channel(first):
-            out.append((True, first, YOUTUBE_FEED_ALL, backlog))
+        if not first:
+            continue
+
+        # 1 part: channel name only
+        if len(parts) == 1:
+            out.append((True, first, default_feed_type, ""))
+            continue
+
+        # 2 parts: channel | backlog  or  channel | feed_type
+        if len(parts) == 2:
+            if _is_youtube_feed_type(second):
+                out.append((True, first, second, ""))
+            elif _is_backlog_checkbox(second):
+                out.append((True, first, default_feed_type, second))
+            else:
+                out.append((True, first, default_feed_type, ""))
+            continue
+
+        # 3+ parts: channel | feed_type | backlog
+        if _is_youtube_feed_type(second):
+            out.append((True, first, second, third))
         else:
-            out.append((False, first, second, backlog))
+            out.append((True, first, default_feed_type, third))
     return out
 
 
@@ -233,48 +224,30 @@ async def _parse_feeds_text_and_fetch_names(
     raw: str,
     existing_url_to_name: dict[str, str] | None = None,
     existing_url_to_backlog: dict[str, str] | None = None,
-) -> list[dict[str, str]]:
-    """Parse feed lines: YouTube 'channel | feed_type | backlog' or manual 'Name | RSS URL | backlog'.
-    Resolves YouTube channels to channel_id and builds RSS URL (All/Videos/Shorts/Live).
-    """
-    existing_name = existing_url_to_name or {}
+) -> list[dict[str, Any]]:
+    """Parse feed lines: YouTube channel names only (no backlog in text; backlog set by checkbox in UI).
+    Resolves each channel to channel_id and builds feed URLs; backlog comes from existing or step 2."""
     existing_backlog = existing_url_to_backlog or {}
     lines = _parse_feeds_text_lines(raw)
-    result: list[dict[str, str]] = []
-    for is_youtube, part1, part2, backlog_url in lines:
-        backlog = (backlog_url or "").strip()
-
-        if is_youtube:
-            resolved = await _resolve_youtube_channel(hass, part1)
-            if not resolved:
-                continue
-            channel_id, channel_name = resolved
-            feed_type = (part2 or YOUTUBE_FEED_ALL).lower().strip()
-            if feed_type not in YOUTUBE_FEED_TYPES:
-                feed_type = YOUTUBE_FEED_ALL
-            rss_url = _youtube_feed_url(channel_id, feed_type)
-            display_name = channel_name or part1
-            result.append({
-                CONF_FEED_URL: rss_url,
-                CONF_FEED_NAME: display_name,
-                CONF_BACKLOG_PLAYLIST_URL: backlog or existing_backlog.get(rss_url, ""),
-            })
-        else:
-            rss_url = part2
-            if not rss_url:
-                continue
-            if part1:
-                display_name = part1
-            elif rss_url in existing_name:
-                display_name = existing_name[rss_url]
-            else:
-                display_name = await _fetch_feed_name(hass, rss_url) or rss_url
-            backlog = backlog or existing_backlog.get(rss_url, "")
-            result.append({
-                CONF_FEED_URL: rss_url,
-                CONF_FEED_NAME: display_name,
-                CONF_BACKLOG_PLAYLIST_URL: backlog.strip(),
-            })
+    result: list[dict[str, Any]] = []
+    for _is_youtube, part1, part2, _backlog_ignored in lines:
+        resolved = await _resolve_youtube_channel(hass, part1)
+        if not resolved:
+            continue
+        channel_id, channel_name = resolved
+        feed_type = (part2 or YOUTUBE_FEED_VIDEOS).lower().strip()
+        if feed_type not in YOUTUBE_FEED_TYPES:
+            feed_type = YOUTUBE_FEED_VIDEOS
+        rss_url = _youtube_feed_url(channel_id, feed_type)
+        display_name = channel_name or part1
+        backlog_url = existing_backlog.get(rss_url, "")
+        result.append({
+            CONF_FEED_URL: rss_url,
+            CONF_FEED_NAME: display_name,
+            CONF_BACKLOG_PLAYLIST_URL: backlog_url,
+            CONF_CHANNEL_ID: channel_id,
+            "_feed_type": feed_type,
+        })
     return result
 
 
@@ -304,11 +277,28 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow."""
         return MeTubeManagerOptionsFlow(config_entry.entry_id)
 
+    def _default_url_and_quality(self) -> tuple[str, str]:
+        """Return (url, quality) from first existing MeTube Manager entry, or defaults."""
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            return ("http://localhost:8081", DEFAULT_QUALITY)
+        first = entries[0]
+        opts = first.options or {}
+        data = first.data or {}
+        url = (opts.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
+        if not url:
+            url = "http://localhost:8081"
+        quality = opts.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
+        if quality not in [v for v, _ in QUALITY_OPTIONS]:
+            quality = DEFAULT_QUALITY
+        return (url, quality)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step (MeTube URL + quality). Feeds are added later via Configure."""
+        """Handle the initial step: one channel per integration. URL/quality default from first existing entry."""
         errors: dict[str, str] = {}
+        default_url, default_quality = self._default_url_and_quality()
         if user_input is not None:
             url = _normalize_url(user_input.get(CONF_METUBE_URL, ""))
             if not _validate_metube_url(url):
@@ -318,33 +308,47 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not ok:
                     errors["base"] = "cannot_connect"
                 else:
-                    quality = user_input.get(CONF_QUALITY, DEFAULT_QUALITY)
-                    # Optional: support import with rss_feeds
-                    feeds_with_names: list[dict[str, str]] = []
-                    rss_raw = user_input.get(CONF_RSS_FEEDS)
-                    if isinstance(rss_raw, str) and rss_raw.strip():
-                        feeds_with_names = await _parse_feeds_text_and_fetch_names(
-                            self.hass, rss_raw, {}, {}
-                        )
-                    elif isinstance(rss_raw, list) and rss_raw:
-                        feeds_with_names = await _parse_feeds_text_and_fetch_names(
-                            self.hass, "\n".join(str(x) for x in rss_raw), {}, {}
-                        )
-                    return self.async_create_entry(
-                        title=url or "MeTube",
-                        data={
-                            CONF_METUBE_URL: url,
-                            CONF_QUALITY: quality,
-                        },
-                        options={CONF_RSS_FEEDS: feeds_with_names},
-                    )
+                    channel_name = (user_input.get(CONF_CHANNEL_NAME) or "").strip()
+                    if not channel_name:
+                        errors["base"] = "invalid_feed"
+                    else:
+                        resolved = await _resolve_youtube_channel(self.hass, channel_name)
+                        if not resolved:
+                            errors["base"] = "invalid_feed"
+                        else:
+                            channel_id, display_name = resolved
+                            feed_type = YOUTUBE_FEED_VIDEOS
+                            rss_url = _youtube_feed_url(channel_id, feed_type)
+                            fetch_backlog = bool(user_input.get(CONF_FETCH_BACKLOG, False))
+                            backlog_url = (
+                                _youtube_backlog_playlist_url(channel_id, feed_type)
+                                if fetch_backlog
+                                else ""
+                            )
+                            feed = {
+                                CONF_FEED_URL: rss_url,
+                                CONF_FEED_NAME: display_name or channel_name,
+                                CONF_BACKLOG_PLAYLIST_URL: backlog_url,
+                                CONF_CHANNEL_ID: channel_id,
+                            }
+                            quality = user_input.get(CONF_QUALITY, default_quality)
+                            return self.async_create_entry(
+                                title=display_name or channel_name,
+                                data={
+                                    CONF_METUBE_URL: url,
+                                    CONF_QUALITY: quality,
+                                },
+                                options={CONF_RSS_FEEDS: [feed]},
+                            )
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_METUBE_URL, default="http://localhost:8081"): str,
-                vol.Required(CONF_QUALITY, default=DEFAULT_QUALITY): vol.In(
+                vol.Required(CONF_METUBE_URL, default=default_url): str,
+                vol.Required(CONF_QUALITY, default=default_quality): vol.In(
                     [v for v, _ in QUALITY_OPTIONS]
                 ),
+                vol.Required(CONF_CHANNEL_NAME, default=""): str,
+                vol.Required(CONF_FETCH_BACKLOG, default=False): cv.boolean,
             }
         )
         return self.async_show_form(
@@ -370,46 +374,69 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
         """Look up the config entry by id."""
         return self.hass.config_entries.async_get_entry(self._entry_id)
 
+    def _current_single_feed(self) -> dict[str, Any] | None:
+        """Return the single feed dict for this entry, or None."""
+        entry = self._config_entry
+        if not entry:
+            return None
+        feeds = entry.options.get(CONF_RSS_FEEDS) or entry.data.get(CONF_RSS_FEEDS) or []
+        if not feeds or not isinstance(feeds[0], dict):
+            return None
+        return feeds[0]
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage the options. Feeds shown as 'Name | URL'; new URLs get name fetched."""
+        """Edit this channel: MeTube URL, quality, channel name, fetch backlog."""
+        entry = self._config_entry
+        if not entry:
+            return self.async_abort(reason="config_entry_not_found")
+        errors: dict[str, str] = {}
         if user_input is not None:
             url = _normalize_url(user_input.get(CONF_METUBE_URL, ""))
             if not _validate_metube_url(url):
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=self._schema(),
+                    data_schema=self._schema(user_input),
                     errors={"base": "invalid_url"},
                 )
-            # Do not block save if MeTube is unreachable — user can add feeds and fix URL later
             ok = await _test_metube_connection(self.hass, url)
             if not ok:
-                # Still save; connection will be retried when polling
                 pass
-
-            feeds_text = user_input.get(CONF_RSS_FEEDS, "")
-            names, backlogs = self._current_feed_names_and_backlogs()
-            feeds_with_names = await _parse_feeds_text_and_fetch_names(
-                self.hass,
-                feeds_text,
-                existing_url_to_name=names,
-                existing_url_to_backlog=backlogs,
-            )
-            # If user entered lines but none parsed, show error and re-show form
-            lines_entered = [l.strip() for l in (feeds_text or "").splitlines() if l.strip()]
-            if lines_entered and not feeds_with_names:
+            channel_name = (user_input.get(CONF_CHANNEL_NAME) or "").strip()
+            if not channel_name:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=self._schema(),
+                    data_schema=self._schema(user_input),
                     errors={"base": "invalid_feed"},
                 )
+            resolved = await _resolve_youtube_channel(self.hass, channel_name)
+            if not resolved:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._schema(user_input),
+                    errors={"base": "invalid_feed"},
+                )
+            channel_id, display_name = resolved
+            feed_type = YOUTUBE_FEED_VIDEOS
+            rss_url = _youtube_feed_url(channel_id, feed_type)
+            fetch_backlog = bool(user_input.get(CONF_FETCH_BACKLOG, False))
+            backlog_url = (
+                _youtube_backlog_playlist_url(channel_id, feed_type) if fetch_backlog else ""
+            )
+            feed = {
+                CONF_FEED_URL: rss_url,
+                CONF_FEED_NAME: display_name or channel_name,
+                CONF_BACKLOG_PLAYLIST_URL: backlog_url,
+                CONF_CHANNEL_ID: channel_id,
+            }
+            quality = user_input.get(CONF_QUALITY, DEFAULT_QUALITY)
             return self.async_create_entry(
-                title="",
+                title=display_name or channel_name,
                 data={
                     CONF_METUBE_URL: url,
-                    CONF_QUALITY: user_input.get(CONF_QUALITY, DEFAULT_QUALITY),
-                    CONF_RSS_FEEDS: feeds_with_names,
+                    CONF_QUALITY: quality,
+                    CONF_RSS_FEEDS: [feed],
                 },
             )
 
@@ -418,64 +445,38 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
             data_schema=self._schema(),
         )
 
-    def _current_feed_names_and_backlogs(self) -> tuple[dict[str, str], dict[str, str]]:
-        """Return (feed URL -> name, feed URL -> backlog playlist URL) from current config."""
+    def _schema(self, user_input: dict[str, Any] | None = None) -> vol.Schema:
+        """Build options schema: URL, quality, channel name, fetch backlog (one channel per entry)."""
         entry = self._config_entry
         if not entry:
-            return {}, {}
-        options = entry.options or {}
-        feeds_list = options.get(CONF_RSS_FEEDS)
-        if not isinstance(feeds_list, list):
-            feeds_list = []
-        names: dict[str, str] = {}
-        backlogs: dict[str, str] = {}
-        for f in feeds_list:
-            if isinstance(f, dict):
-                u = (f.get(CONF_FEED_URL) or f.get("url") or "").strip()
-                if not u:
-                    continue
-                names[u] = (f.get(CONF_FEED_NAME) or f.get("name") or "").strip() or u
-                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or f.get("backlog_playlist_url") or "").strip()
-                if b:
-                    backlogs[u] = b
-            elif isinstance(f, str) and f.strip():
-                names[f.strip()] = f.strip()
-        return names, backlogs
-
-    def _schema(self) -> vol.Schema:
-        """Build options schema. Feeds: 'Name | RSS URL' or 'Name | RSS URL | Backlog playlist URL'."""
-        entry = self._config_entry
-        if not entry:
-            data, options = {}, {}
+            url, quality = "http://localhost:8081", DEFAULT_QUALITY
+            channel_name, fetch_backlog = "", False
         else:
             data = entry.data or {}
             options = entry.options or {}
-        url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
-        quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
-        quality_options_values = [v for v, _ in QUALITY_OPTIONS]
-        if quality not in quality_options_values:
+            url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
+            quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
+            feed = self._current_single_feed()
+            if feed:
+                channel_name = (feed.get(CONF_FEED_NAME) or feed.get("name") or "").strip()
+                fetch_backlog = bool(
+                    (feed.get(CONF_BACKLOG_PLAYLIST_URL) or feed.get("backlog_playlist_url") or "").strip()
+                )
+            else:
+                channel_name, fetch_backlog = "", False
+        if user_input:
+            url = (user_input.get(CONF_METUBE_URL) or url or "").strip()
+            quality = user_input.get(CONF_QUALITY) or quality
+            channel_name = (user_input.get(CONF_CHANNEL_NAME) or channel_name or "").strip()
+            fetch_backlog = bool(user_input.get(CONF_FETCH_BACKLOG, fetch_backlog))
+        quality_values = [v for v, _ in QUALITY_OPTIONS]
+        if quality not in quality_values:
             quality = DEFAULT_QUALITY
-        feeds_list = options.get(CONF_RSS_FEEDS)
-        if not isinstance(feeds_list, list):
-            feeds_list = []
-        lines = []
-        for f in feeds_list:
-            if isinstance(f, dict):
-                u = (f.get(CONF_FEED_URL) or f.get("url") or "").strip()
-                n = (f.get(CONF_FEED_NAME) or f.get("name") or "").strip() or u
-                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or f.get("backlog_playlist_url") or "").strip()
-                if u:
-                    if b:
-                        lines.append(f"{n} | {u} | {b}")
-                    else:
-                        lines.append(f"{n} | {u}")
-            elif isinstance(f, str) and f.strip():
-                lines.append(f.strip())
-        feeds_text = "\n".join(lines)
         return vol.Schema(
             {
-                vol.Required(CONF_METUBE_URL, default=url): str,
-                vol.Required(CONF_QUALITY, default=quality): vol.In(quality_options_values),
-                vol.Required(CONF_RSS_FEEDS, default=feeds_text): str,
+                vol.Required(CONF_METUBE_URL, default=url or "http://localhost:8081"): str,
+                vol.Required(CONF_QUALITY, default=quality): vol.In(quality_values),
+                vol.Required(CONF_CHANNEL_NAME, default=channel_name): str,
+                vol.Required(CONF_FETCH_BACKLOG, default=fetch_backlog): cv.boolean,
             }
         )

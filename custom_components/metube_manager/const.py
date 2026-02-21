@@ -8,6 +8,9 @@ CONF_RSS_FEEDS = "rss_feeds"
 CONF_FEED_URL = "url"
 CONF_FEED_NAME = "name"
 CONF_BACKLOG_PLAYLIST_URL = "backlog_playlist_url"
+CONF_CHANNEL_ID = "channel_id"  # YouTube channel ID for device display
+CONF_CHANNEL_NAME = "channel_name"  # User input: channel name or @handle
+CONF_FETCH_BACKLOG = "fetch_backlog"
 CONF_QUALITY = "quality"
 # Quality dropdown options (value, display label) for MeTube/yt-dlp
 QUALITY_OPTIONS: list[tuple[str, str]] = [

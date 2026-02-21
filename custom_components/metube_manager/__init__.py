@@ -137,44 +137,78 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 feed_name = feed.get("name") or feed_url
                 backlog_playlist = (feed.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
 
-                # One-time backlog: fetch full playlist via yt-dlp and send to MeTube
+                # One-time backlog: generate URL from feed (YouTube playlist or RSS feed)
                 backlog_sent = 0
                 if backlog_playlist and feed_url not in backlog_done:
-                    _LOGGER.info("Fetching backlog playlist for %s: %s", feed_name, backlog_playlist)
-                    try:
-                        playlist_urls = await hass.async_add_executor_job(
-                            _yt_dlp_playlist_video_urls, backlog_playlist
-                        )
-                        for link in playlist_urls:
-                            if not link or link in seen:
-                                continue
-                            seen.add(link)
-                            try:
-                                async with session.post(
-                                    add_url,
-                                    json={
-                                        "url": link,
-                                        "quality": quality,
-                                        "format": "mp4",
-                                    },
-                                    timeout=aiohttp.ClientTimeout(total=30),
-                                ) as add_resp:
-                                    if add_resp.status in (200, 201):
-                                        _LOGGER.info("Sent to MeTube (backlog): %s", link)
-                                        backlog_sent += 1
-                                    else:
-                                        body = await add_resp.text()
-                                        _LOGGER.warning(
-                                            "MeTube /add failed for %s: %s %s",
-                                            link,
-                                            add_resp.status,
-                                            body[:200],
-                                        )
-                            except Exception as e:
-                                _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
-                        backlog_done.add(feed_url)
-                    except Exception as e:
-                        _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
+                    if backlog_playlist == feed_url:
+                        # RSS backlog: fetch feed and send all current items once
+                        _LOGGER.info("Fetching RSS backlog for %s", feed_name)
+                        try:
+                            async with session.get(
+                                feed_url,
+                                timeout=aiohttp.ClientTimeout(total=30),
+                                headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
+                            ) as resp:
+                                if resp.status != 200:
+                                    raise OSError(f"RSS returned {resp.status}")
+                                text = await resp.text()
+                            parsed = await hass.async_add_executor_job(feedparser.parse, text)
+                            for item in getattr(parsed, "entries", []) or []:
+                                link = (item.get("link") or "").strip()
+                                if not link or link in seen:
+                                    continue
+                                seen.add(link)
+                                try:
+                                    async with session.post(
+                                        add_url,
+                                        json={"url": link, "quality": quality, "format": "mp4"},
+                                        timeout=aiohttp.ClientTimeout(total=30),
+                                    ) as add_resp:
+                                        if add_resp.status in (200, 201):
+                                            _LOGGER.info("Sent to MeTube (RSS backlog): %s", link)
+                                            backlog_sent += 1
+                                except Exception as e:
+                                    _LOGGER.warning("MeTube /add failed for %s: %s", link, e)
+                            backlog_done.add(feed_url)
+                        except Exception as e:
+                            _LOGGER.exception("RSS backlog failed for %s: %s", feed_name, e)
+                    else:
+                        # YouTube playlist: fetch via yt-dlp
+                        _LOGGER.info("Fetching backlog playlist for %s: %s", feed_name, backlog_playlist)
+                        try:
+                            playlist_urls = await hass.async_add_executor_job(
+                                _yt_dlp_playlist_video_urls, backlog_playlist
+                            )
+                            for link in playlist_urls:
+                                if not link or link in seen:
+                                    continue
+                                seen.add(link)
+                                try:
+                                    async with session.post(
+                                        add_url,
+                                        json={
+                                            "url": link,
+                                            "quality": quality,
+                                            "format": "mp4",
+                                        },
+                                        timeout=aiohttp.ClientTimeout(total=30),
+                                    ) as add_resp:
+                                        if add_resp.status in (200, 201):
+                                            _LOGGER.info("Sent to MeTube (backlog): %s", link)
+                                            backlog_sent += 1
+                                        else:
+                                            body = await add_resp.text()
+                                            _LOGGER.warning(
+                                                "MeTube /add failed for %s: %s %s",
+                                                link,
+                                                add_resp.status,
+                                                body[:200],
+                                            )
+                                except Exception as e:
+                                    _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                            backlog_done.add(feed_url)
+                        except Exception as e:
+                            _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
                 _update_feed_stats(feed_stats, feed_url, backlog_sent)
 
             for feed in feeds:
@@ -262,10 +296,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up sensor so the integration has a visible entity (feed count, scan interval)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
-    # Create MeTube Manager dashboard (feeds and stats) in Lovelace
+    # Create/update MeTube Manager dashboard (shows all channels from all entries)
     try:
         from .dashboard import ensure_dashboard
-        await ensure_dashboard(hass, entry.entry_id)
+        await ensure_dashboard(hass)
     except Exception as e:
         _LOGGER.warning("Could not create MeTube Manager dashboard: %s", e)
 

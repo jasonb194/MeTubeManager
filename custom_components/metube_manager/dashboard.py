@@ -20,8 +20,8 @@ LOVELACE_CONFIG_KEY_TEMPLATE = "lovelace.{}"
 LOVELACE_CONFIG_VERSION = 1
 
 
-async def ensure_dashboard(hass: HomeAssistant, entry_id: str) -> None:
-    """Create or ensure the MeTube Manager dashboard exists. Uses Lovelace storage."""
+async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> None:
+    """Create or ensure the MeTube Manager dashboard exists. Shows all channels (all config entries)."""
     dashboards_store = Store(hass, LOVELACE_DASHBOARDS_VERSION, LOVELACE_DASHBOARDS_KEY)
     data = await dashboards_store.async_load() or {}
     items = list(data.get("items") or [])
@@ -38,40 +38,68 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str) -> None:
         items.append(new_item)
         await dashboards_store.async_save({"items": items})
 
-    # Always update view config: fix broken device_id format and keep entity list in sync when feeds change.
-    # Entities must be a list of entity ID strings only (Lovelace does not support device_id in entities card).
+    # Collect entities from ALL MeTube Manager config entries (one integration per channel).
     ent_reg = er.async_get(hass)
-    entity_ids: list[str] = []
-    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry_id):
-        if reg_entry.entity_id:
-            entity_ids.append(reg_entry.entity_id)
-    if not entity_ids:
-        entity_ids = ["sensor.metube_manager_status"]
+    all_feed_entries: list[tuple[str, str]] = []  # (entity_id, channel/feed name)
+    status_entity_ids: list[str] = []
+    for config_entry in hass.config_entries.async_entries("metube_manager"):
+        for reg_entry in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id):
+            if not reg_entry.entity_id:
+                continue
+            name = reg_entry.original_name or reg_entry.entity_id or ""
+            if (reg_entry.unique_id or "").endswith("_status"):
+                status_entity_ids.append(reg_entry.entity_id)
+            else:
+                all_feed_entries.append((reg_entry.entity_id, name))
 
-    # Link to integrations list; users click MeTube Manager → Configure to add feeds (no separate integration per feed)
     integrations_path = "/config/integrations"
     add_feeds_markdown = (
-        f"**To add or edit feeds:** Go to [Settings → Devices & services]({integrations_path}), "
-        "find **MeTube Manager**, click it, then click **Configure**. "
-        "Add YouTube channels (e.g. `@Channel | Videos`) or RSS URLs in the text area — one per line. "
-        "Do **not** use \"Add integration\"; feeds are added inside MeTube Manager."
+        f"**To add a channel:** [Settings → Devices & services]({integrations_path}) → **Add integration** → **MeTube Manager**. "
+        "One integration = one channel. To edit a channel, click its card and **Configure**."
     )
+
+    cards: list[dict[str, Any]] = [
+        {"type": "markdown", "content": add_feeds_markdown, "title": "Channels"},
+    ]
+    if status_entity_ids:
+        cards.append({
+            "type": "entities",
+            "title": "Overview",
+            "entities": status_entity_ids,
+        })
+
+    for eid, channel_name in all_feed_entries:
+        state = hass.states.get(eid)
+        attrs = (state.attributes or {}) if state else {}
+        youtube_url = attrs.get("youtube_channel_url") or ""
+        rows: list[dict[str, Any]] = []
+        if youtube_url:
+            rows.append({
+                "type": "weblink",
+                "url": youtube_url,
+                "name": "YouTube channel",
+                "icon": "mdi:youtube",
+                "new_tab": True,
+            })
+        rows.extend([
+            {"entity": eid},
+            {"type": "attribute", "entity": eid, "attribute": "channel_id", "name": "Channel ID"},
+            {"type": "attribute", "entity": eid, "attribute": "rss_feed", "name": "Feed URL"},
+            {"type": "attribute", "entity": eid, "attribute": "backlog_url", "name": "Backlog URL"},
+            {"type": "attribute", "entity": eid, "attribute": "backlog_enabled", "name": "Backlog enabled"},
+            {"type": "attribute", "entity": eid, "attribute": "videos_downloaded", "name": "Videos downloaded"},
+            {"type": "attribute", "entity": eid, "attribute": "last_downloaded", "name": "Last downloaded", "format": "datetime"},
+        ])
+        cards.append({
+            "type": "entities",
+            "title": channel_name or eid,
+            "entities": rows,
+        })
 
     view_config: dict[str, Any] = {
         "title": DASHBOARD_TITLE,
         "path": DASHBOARD_URL_PATH,
-        "cards": [
-            {
-                "type": "markdown",
-                "content": add_feeds_markdown,
-                "title": "Manage feeds",
-            },
-            {
-                "type": "entities",
-                "title": "Feeds & status",
-                "entities": entity_ids,
-            },
-        ],
+        "cards": cards,
     }
 
     dashboard_config = {"views": [view_config]}

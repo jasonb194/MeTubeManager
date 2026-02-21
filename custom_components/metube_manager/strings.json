@@ -3,10 +3,12 @@
     "step": {
       "user": {
         "title": "MeTube Manager",
-        "description": "Connect to your MeTube instance. You can add YouTube channels and RSS feeds later via Configure.",
+        "description": "One integration = one channel. URL and quality default from your first MeTube Manager (if any).",
         "data": {
           "metube_url": "MeTube base URL",
-          "quality": "Download quality"
+          "quality": "Download quality",
+          "channel_name": "YouTube channel name (e.g. MrBeast or @MrBeast)",
+          "fetch_backlog": "Fetch backlog (download existing videos once)"
         },
         "data_description": {
           "metube_url": "e.g. http://metube.local:8081 or https://metube.example.com",
@@ -17,7 +19,7 @@
     "error": {
       "cannot_connect": "Failed to connect to MeTube. Check the URL and that MeTube is running.",
       "invalid_url": "Please enter a valid URL.",
-      "invalid_feed": "No feeds could be read. Use one line per feed: YouTube: @channel | Videos. RSS: paste the feed URL, or Name | https://..."
+      "invalid_feed": "Could not resolve that channel. Enter a YouTube channel name (e.g. MrBeast or @MrBeast). "
     },
     "abort": {
       "already_configured": "This MeTube instance is already configured."
@@ -26,14 +28,18 @@
   "options": {
     "step": {
       "init": {
-        "title": "MeTube Manager options",
-        "description": "This is where you add or remove feeds (do not use Add integration). One feed per line, then Submit. Each feed appears as a sensor (videos sent, last fetched). YouTube: 'channel or @handle | All/Videos/Shorts/Live | optional Backlog'. Manual: 'Name | RSS URL | optional Backlog'.",
+        "title": "Edit channel",
+        "description": "Change MeTube URL, quality, channel name, or backlog for this channel.",
         "data": {
           "metube_url": "MeTube base URL",
           "quality": "Download quality",
-          "rss_feeds": "Channels: @handle | feed_type | backlog, or Name | RSS URL | backlog"
+          "channel_name": "YouTube channel name",
+          "fetch_backlog": "Fetch backlog (download existing videos once)"
         }
       }
+    },
+    "error": {
+      "only_channel_names": "Only YouTube channel names are allowed. Do not enter RSS or website URLs."
     }
   }
 }
