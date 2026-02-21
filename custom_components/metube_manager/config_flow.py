@@ -416,16 +416,18 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
     def _current_feed_names_and_backlogs(self) -> tuple[dict[str, str], dict[str, str]]:
         """Return (feed URL -> name, feed URL -> backlog playlist URL) from current config."""
         options = self.config_entry.options or {}
-        feeds_list = options.get(CONF_RSS_FEEDS) or []
+        feeds_list = options.get(CONF_RSS_FEEDS)
+        if not isinstance(feeds_list, list):
+            feeds_list = []
         names: dict[str, str] = {}
         backlogs: dict[str, str] = {}
         for f in feeds_list:
             if isinstance(f, dict):
-                u = (f.get(CONF_FEED_URL) or "").strip()
+                u = (f.get(CONF_FEED_URL) or f.get("url") or "").strip()
                 if not u:
                     continue
-                names[u] = (f.get(CONF_FEED_NAME) or "").strip() or u
-                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
+                names[u] = (f.get(CONF_FEED_NAME) or f.get("name") or "").strip() or u
+                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or f.get("backlog_playlist_url") or "").strip()
                 if b:
                     backlogs[u] = b
             elif isinstance(f, str) and f.strip():
@@ -434,17 +436,22 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
 
     def _schema(self) -> vol.Schema:
         """Build options schema. Feeds: 'Name | RSS URL' or 'Name | RSS URL | Backlog playlist URL'."""
-        data = self.config_entry.data
+        data = self.config_entry.data or {}
         options = self.config_entry.options or {}
-        url = options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL, "")
-        quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY, DEFAULT_QUALITY)
-        feeds_list = options.get(CONF_RSS_FEEDS) or []
+        url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
+        quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
+        quality_options_values = [v for v, _ in QUALITY_OPTIONS]
+        if quality not in quality_options_values:
+            quality = DEFAULT_QUALITY
+        feeds_list = options.get(CONF_RSS_FEEDS)
+        if not isinstance(feeds_list, list):
+            feeds_list = []
         lines = []
         for f in feeds_list:
             if isinstance(f, dict):
-                u = (f.get(CONF_FEED_URL) or "").strip()
-                n = (f.get(CONF_FEED_NAME) or "").strip() or u
-                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
+                u = (f.get(CONF_FEED_URL) or f.get("url") or "").strip()
+                n = (f.get(CONF_FEED_NAME) or f.get("name") or "").strip() or u
+                b = (f.get(CONF_BACKLOG_PLAYLIST_URL) or f.get("backlog_playlist_url") or "").strip()
                 if u:
                     if b:
                         lines.append(f"{n} | {u} | {b}")
@@ -456,9 +463,7 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
         return vol.Schema(
             {
                 vol.Required(CONF_METUBE_URL, default=url): str,
-                vol.Required(CONF_QUALITY, default=quality): vol.In(
-                [v for v, _ in QUALITY_OPTIONS]
-            ),
+                vol.Required(CONF_QUALITY, default=quality): vol.In(quality_options_values),
                 vol.Required(CONF_RSS_FEEDS, default=feeds_text): str,
             }
         )
