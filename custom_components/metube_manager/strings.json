@@ -17,7 +17,7 @@
     "error": {
       "cannot_connect": "Failed to connect to MeTube. Check the URL and that MeTube is running.",
       "invalid_url": "Please enter a valid URL.",
-      "invalid_feed": "One or more feed URLs are invalid."
+      "invalid_feed": "No feeds could be read. Use one line per feed: YouTube: @channel | Videos. RSS: paste the feed URL, or Name | https://..."
     },
     "abort": {
       "already_configured": "This MeTube instance is already configured."

@@ -377,13 +377,12 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
                     data_schema=self._schema(),
                     errors={"base": "invalid_url"},
                 )
+            # Do not block save if MeTube is unreachable — user can add feeds and fix URL later
             ok = await _test_metube_connection(self.hass, url)
             if not ok:
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=self._schema(),
-                    errors={"base": "cannot_connect"},
-                )
+                # Still save; connection will be retried when polling
+                pass
+
             feeds_text = user_input.get(CONF_RSS_FEEDS, "")
             names, backlogs = self._current_feed_names_and_backlogs()
             feeds_with_names = await _parse_feeds_text_and_fetch_names(
@@ -392,6 +391,14 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
                 existing_url_to_name=names,
                 existing_url_to_backlog=backlogs,
             )
+            # If user entered lines but none parsed, show error and re-show form
+            lines_entered = [l.strip() for l in (feeds_text or "").splitlines() if l.strip()]
+            if lines_entered and not feeds_with_names:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._schema(),
+                    errors={"base": "invalid_feed"},
+                )
             return self.async_create_entry(
                 title="",
                 data={
