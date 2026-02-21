@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MeTube Manager",
+        "description": "Connect to your MeTube instance. Add RSS feed URLs in the next step (or later in options).",
+        "data": {
+          "metube_url": "MeTube base URL",
+          "quality": "Download quality"
+        },
+        "data_description": {
+          "metube_url": "e.g. http://metube.local:8081 or https://metube.example.com",
+          "quality": "Quality preset sent to MeTube (e.g. best, worst, bestvideo)"
+        }
+      },
+      "rss": {
+        "title": "RSS feeds",
+        "description": "Enter one RSS feed URL per line. New videos from these feeds will be sent to MeTube every hour.",
+        "data": {
+          "rss_feeds": "RSS feed URLs (one per line)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to MeTube. Check the URL and that MeTube is running.",
+      "invalid_url": "Please enter a valid URL.",
+      "invalid_feed": "One or more feed URLs are invalid."
+    },
+    "abort": {
+      "already_configured": "This MeTube instance is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MeTube Manager options",
+        "description": "Update your MeTube URL and/or RSS feeds. One feed URL per line.",
+        "data": {
+          "metube_url": "MeTube base URL",
+          "quality": "Download quality",
+          "rss_feeds": "RSS feed URLs (one per line)"
+        }
+      }
+    }
+  }
+}
