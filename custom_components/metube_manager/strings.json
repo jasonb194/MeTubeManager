@@ -27,7 +27,7 @@
     "step": {
       "init": {
         "title": "MeTube Manager options",
-        "description": "Add feeds: add a new line. Remove a feed: delete its line. Save to apply. Each feed appears as a sensor (videos sent, last fetched). YouTube: 'channel or @handle | All/Videos/Shorts/Live | optional Backlog'. Manual: 'Name | RSS URL | optional Backlog'.",
+        "description": "This is where you add or remove feeds (do not use Add integration). One feed per line, then Submit. Each feed appears as a sensor (videos sent, last fetched). YouTube: 'channel or @handle | All/Videos/Shorts/Live | optional Backlog'. Manual: 'Name | RSS URL | optional Backlog'.",
         "data": {
           "metube_url": "MeTube base URL",
           "quality": "Download quality",

@@ -48,10 +48,13 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str) -> None:
     if not entity_ids:
         entity_ids = ["sensor.metube_manager_status"]
 
-    # Link to integration Configure so users can add/edit feeds without hunting in Settings
-    configure_path = f"/config/integrations/integration/{entry_id}"
+    # Link to integrations list; users click MeTube Manager → Configure to add feeds (no separate integration per feed)
+    integrations_path = "/config/integrations"
     add_feeds_markdown = (
-        f"[**Add or edit feeds**]({configure_path}) — open MeTube Manager settings to add YouTube channels or RSS feeds."
+        f"**To add or edit feeds:** Go to [Settings → Devices & services]({integrations_path}), "
+        "find **MeTube Manager**, click it, then click **Configure**. "
+        "Add YouTube channels (e.g. `@Channel | Videos`) or RSS URLs in the text area — one per line. "
+        "Do **not** use \"Add integration\"; feeds are added inside MeTube Manager."
     )
 
     view_config: dict[str, Any] = {
