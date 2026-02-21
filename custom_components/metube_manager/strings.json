@@ -3,21 +3,14 @@
     "step": {
       "user": {
         "title": "MeTube Manager",
-        "description": "Connect to your MeTube instance. Add RSS feed URLs in the next step (or later in options).",
+        "description": "Connect to your MeTube instance. You can add YouTube channels and RSS feeds later via Configure.",
         "data": {
           "metube_url": "MeTube base URL",
           "quality": "Download quality"
         },
         "data_description": {
           "metube_url": "e.g. http://metube.local:8081 or https://metube.example.com",
-          "quality": "Quality preset sent to MeTube (e.g. best, worst, bestvideo)"
-        }
-      },
-      "rss": {
-        "title": "YouTube channels & feeds",
-        "description": "One per line. YouTube: channel URL or @handle, then feed type (All, Videos, Shorts, Live), then optional backlog. Example: @MrBeast | Videos. Or manual: Name | RSS URL | Backlog.",
-        "data": {
-          "rss_feeds": "Channels: @handle | All/Videos/Shorts/Live | backlog, or Name | RSS URL | backlog"
+          "quality": "Quality preset sent to MeTube"
         }
       }
     },

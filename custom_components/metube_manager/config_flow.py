@@ -22,6 +22,7 @@ from .const import (
     CONF_RSS_FEEDS,
     DEFAULT_QUALITY,
     DOMAIN,
+    QUALITY_OPTIONS,
     YOUTUBE_FEED_ALL,
     YOUTUBE_FEED_VIDEOS,
     YOUTUBE_FEED_SHORTS,
@@ -306,7 +307,7 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step."""
+        """Handle the initial step (MeTube URL + quality). Feeds are added later via Configure."""
         errors: dict[str, str] = {}
         if user_input is not None:
             url = _normalize_url(user_input.get(CONF_METUBE_URL, ""))
@@ -317,61 +318,39 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not ok:
                     errors["base"] = "cannot_connect"
                 else:
-                    self._user_step_data = {
-                        CONF_METUBE_URL: url,
-                        CONF_QUALITY: user_input.get(CONF_QUALITY, DEFAULT_QUALITY),
-                    }
-                    return self.async_show_form(
-                        step_id="rss",
-                        data_schema=vol.Schema(
-                            {
-                                vol.Required(CONF_RSS_FEEDS, default=""): str,
-                            }
-                        ),
+                    quality = user_input.get(CONF_QUALITY, DEFAULT_QUALITY)
+                    # Optional: support import with rss_feeds
+                    feeds_with_names: list[dict[str, str]] = []
+                    rss_raw = user_input.get(CONF_RSS_FEEDS)
+                    if isinstance(rss_raw, str) and rss_raw.strip():
+                        feeds_with_names = await _parse_feeds_text_and_fetch_names(
+                            self.hass, rss_raw, {}, {}
+                        )
+                    elif isinstance(rss_raw, list) and rss_raw:
+                        feeds_with_names = await _parse_feeds_text_and_fetch_names(
+                            self.hass, "\n".join(str(x) for x in rss_raw), {}, {}
+                        )
+                    return self.async_create_entry(
+                        title=url or "MeTube",
+                        data={
+                            CONF_METUBE_URL: url,
+                            CONF_QUALITY: quality,
+                        },
+                        options={CONF_RSS_FEEDS: feeds_with_names},
                     )
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_METUBE_URL, default="http://localhost:8081"): str,
-                vol.Required(CONF_QUALITY, default=DEFAULT_QUALITY): str,
+                vol.Required(CONF_QUALITY, default=DEFAULT_QUALITY): vol.In(
+                    [v for v, _ in QUALITY_OPTIONS]
+                ),
             }
         )
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
             errors=errors,
-        )
-
-    async def async_step_rss(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle RSS feeds step (optional). Fetches channel name for each feed."""
-        if user_input is not None:
-            step_data = getattr(self, "_user_step_data", {}) or {}
-            metube_url = step_data.get(CONF_METUBE_URL, "")
-            quality = step_data.get(CONF_QUALITY, DEFAULT_QUALITY)
-
-            rss_raw = user_input.get(CONF_RSS_FEEDS, "")
-            feeds_with_names = await _parse_feeds_text_and_fetch_names(
-                self.hass, rss_raw, {}, {}
-            )
-
-            return self.async_create_entry(
-                title=metube_url or "MeTube",
-                data={
-                    CONF_METUBE_URL: metube_url,
-                    CONF_QUALITY: quality,
-                },
-                options={CONF_RSS_FEEDS: feeds_with_names},
-            )
-
-        return self.async_show_form(
-            step_id="rss",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_RSS_FEEDS, default=""): str,
-                }
-            ),
         )
 
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
@@ -470,7 +449,9 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
         return vol.Schema(
             {
                 vol.Required(CONF_METUBE_URL, default=url): str,
-                vol.Required(CONF_QUALITY, default=quality): str,
+                vol.Required(CONF_QUALITY, default=quality): vol.In(
+                [v for v, _ in QUALITY_OPTIONS]
+            ),
                 vol.Required(CONF_RSS_FEEDS, default=feeds_text): str,
             }
         )

@@ -9,6 +9,18 @@ CONF_FEED_URL = "url"
 CONF_FEED_NAME = "name"
 CONF_BACKLOG_PLAYLIST_URL = "backlog_playlist_url"
 CONF_QUALITY = "quality"
+# Quality dropdown options (value, display label) for MeTube/yt-dlp
+QUALITY_OPTIONS: list[tuple[str, str]] = [
+    ("best", "Best"),
+    ("2160p", "2160p"),
+    ("1440p", "1440p"),
+    ("1080p", "1080p"),
+    ("720p", "720p"),
+    ("480p", "480p"),
+    ("360p", "360p"),
+    ("240p", "240p"),
+    ("worst", "Worst"),
+]
 # YouTube feed types (like https://www.newskeeper.io/tools/youtube-rss)
 YOUTUBE_FEED_ALL = "all"
 YOUTUBE_FEED_VIDEOS = "videos"
