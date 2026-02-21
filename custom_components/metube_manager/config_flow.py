@@ -362,8 +362,8 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
     """Handle MeTube Manager options."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
+        """Initialize options flow. Store entry in _config_entry (base class has read-only config_entry)."""
+        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -415,7 +415,7 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
 
     def _current_feed_names_and_backlogs(self) -> tuple[dict[str, str], dict[str, str]]:
         """Return (feed URL -> name, feed URL -> backlog playlist URL) from current config."""
-        options = self.config_entry.options or {}
+        options = self._config_entry.options or {}
         feeds_list = options.get(CONF_RSS_FEEDS)
         if not isinstance(feeds_list, list):
             feeds_list = []
@@ -436,8 +436,8 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
 
     def _schema(self) -> vol.Schema:
         """Build options schema. Feeds: 'Name | RSS URL' or 'Name | RSS URL | Backlog playlist URL'."""
-        data = self.config_entry.data or {}
-        options = self.config_entry.options or {}
+        data = self._config_entry.data or {}
+        options = self._config_entry.options or {}
         url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").strip()
         quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
         quality_options_values = [v for v, _ in QUALITY_OPTIONS]
