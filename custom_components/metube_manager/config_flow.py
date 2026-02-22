@@ -42,6 +42,11 @@ def _normalize_url(url: str) -> str:
     return url.rstrip("/")
 
 
+def _normalize_channel_name(s: str) -> str:
+    """Strip and collapse multiple spaces so channel names don't get extra spaces."""
+    return " ".join((s or "").strip().split())
+
+
 def _validate_metube_url(url: str) -> bool:
     """Validate MeTube base URL."""
     try:
@@ -152,9 +157,10 @@ def _resolve_youtube_channel_sync(url: str) -> tuple[str, str] | None:
             first = info["entries"][0]
             if isinstance(first, dict):
                 channel_id = first.get("channel_id") or first.get("uploader_id")
-        title = (
+        raw_title = (
             (info.get("channel") or info.get("uploader") or info.get("title") or "")
         ).strip()
+        title = _normalize_channel_name(raw_title)
         if channel_id and len(channel_id) >= 2:
             return (str(channel_id), title or channel_id)
     except Exception:
@@ -239,7 +245,7 @@ async def _parse_feeds_text_and_fetch_names(
         if feed_type not in YOUTUBE_FEED_TYPES:
             feed_type = YOUTUBE_FEED_VIDEOS
         rss_url = _youtube_feed_url(channel_id, feed_type)
-        display_name = channel_name or part1
+        display_name = _normalize_channel_name(channel_name or part1)
         backlog_url = existing_backlog.get(rss_url, "")
         result.append({
             CONF_FEED_URL: rss_url,
@@ -325,15 +331,16 @@ class MeTubeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 if fetch_backlog
                                 else ""
                             )
+                            name = _normalize_channel_name(display_name or channel_name)
                             feed = {
                                 CONF_FEED_URL: rss_url,
-                                CONF_FEED_NAME: display_name or channel_name,
+                                CONF_FEED_NAME: name,
                                 CONF_BACKLOG_PLAYLIST_URL: backlog_url,
                                 CONF_CHANNEL_ID: channel_id,
                             }
                             quality = user_input.get(CONF_QUALITY, default_quality)
                             return self.async_create_entry(
-                                title=display_name or channel_name,
+                                title=name,
                                 data={
                                     CONF_METUBE_URL: url,
                                     CONF_QUALITY: quality,
@@ -424,15 +431,16 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
             backlog_url = (
                 _youtube_backlog_playlist_url(channel_id, feed_type) if fetch_backlog else ""
             )
+            name = _normalize_channel_name(display_name or channel_name)
             feed = {
                 CONF_FEED_URL: rss_url,
-                CONF_FEED_NAME: display_name or channel_name,
+                CONF_FEED_NAME: name,
                 CONF_BACKLOG_PLAYLIST_URL: backlog_url,
                 CONF_CHANNEL_ID: channel_id,
             }
             quality = user_input.get(CONF_QUALITY, DEFAULT_QUALITY)
             return self.async_create_entry(
-                title=display_name or channel_name,
+                title=name,
                 data={
                     CONF_METUBE_URL: url,
                     CONF_QUALITY: quality,
@@ -458,7 +466,9 @@ class MeTubeManagerOptionsFlow(config_entries.OptionsFlow):
             quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
             feed = self._current_single_feed()
             if feed:
-                channel_name = (feed.get(CONF_FEED_NAME) or feed.get("name") or "").strip()
+                channel_name = _normalize_channel_name(
+                    feed.get(CONF_FEED_NAME) or feed.get("name") or ""
+                )
                 fetch_backlog = bool(
                     (feed.get(CONF_BACKLOG_PLAYLIST_URL) or feed.get("backlog_playlist_url") or "").strip()
                 )

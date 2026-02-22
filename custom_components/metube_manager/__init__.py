@@ -10,7 +10,7 @@ import aiohttp
 import feedparser
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_utc_time_change
+from homeassistant.helpers.event import async_track_utc_time_change, async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -108,11 +108,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _poll_feeds(*_args: Any, **_kwargs: Any) -> None:
         """Fetch all RSS feeds, find new video URLs, send to MeTube."""
-        options = entry.options or entry.data
+        # Use latest entry from config store (important for newly added entries)
+        current_entry = hass.config_entries.async_get_entry(entry.entry_id)
+        if not current_entry:
+            return
+        options = current_entry.options or current_entry.data
         raw_feeds = options.get(CONF_RSS_FEEDS) or []
         feeds = [f for f in (_normalize_feed(x) for x in raw_feeds) if f]
-        base_url = (options.get(CONF_METUBE_URL) or entry.data.get(CONF_METUBE_URL) or "").rstrip("/")
-        quality = options.get(CONF_QUALITY) or entry.data.get(CONF_QUALITY) or DEFAULT_QUALITY
+        base_url = (options.get(CONF_METUBE_URL) or current_entry.data.get(CONF_METUBE_URL) or "").rstrip("/")
+        quality = options.get(CONF_QUALITY) or current_entry.data.get(CONF_QUALITY) or DEFAULT_QUALITY
 
         if not base_url or not feeds:
             return
@@ -164,11 +168,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                         timeout=aiohttp.ClientTimeout(total=30),
                                     ) as add_resp:
                                         if add_resp.status in (200, 201):
-                                            _LOGGER.info("Sent to MeTube (RSS backlog): %s", link)
+                                            _LOGGER.debug("Sent to MeTube (RSS backlog): %s", link)
                                             backlog_sent += 1
                                 except Exception as e:
                                     _LOGGER.warning("MeTube /add failed for %s: %s", link, e)
                             backlog_done.add(feed_url)
+                            if backlog_sent:
+                                _LOGGER.info(
+                                    "MeTube Manager: sent %s video(s) from RSS backlog for %s",
+                                    backlog_sent,
+                                    feed_name,
+                                )
                         except Exception as e:
                             _LOGGER.exception("RSS backlog failed for %s: %s", feed_name, e)
                     else:
@@ -193,7 +203,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                         timeout=aiohttp.ClientTimeout(total=30),
                                     ) as add_resp:
                                         if add_resp.status in (200, 201):
-                                            _LOGGER.info("Sent to MeTube (backlog): %s", link)
+                                            _LOGGER.debug("Sent to MeTube (backlog): %s", link)
                                             backlog_sent += 1
                                         else:
                                             body = await add_resp.text()
@@ -206,6 +216,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 except Exception as e:
                                     _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
                             backlog_done.add(feed_url)
+                            if backlog_sent:
+                                _LOGGER.info(
+                                    "MeTube Manager: sent %s video(s) from playlist backlog for %s",
+                                    backlog_sent,
+                                    feed_name,
+                                )
                         except Exception as e:
                             _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
                 _update_feed_stats(feed_stats, feed_url, backlog_sent)
@@ -261,7 +277,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             timeout=aiohttp.ClientTimeout(total=30),
                         ) as add_resp:
                             if add_resp.status in (200, 201):
-                                _LOGGER.info("Sent to MeTube: %s", link)
+                                _LOGGER.debug("Sent to MeTube: %s", link)
                                 rss_sent += 1
                             else:
                                 body = await add_resp.text()
@@ -273,6 +289,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 )
                     except Exception as e:
                         _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                if rss_sent:
+                    _LOGGER.info(
+                        "MeTube Manager: sent %s new video(s) from feed %s",
+                        rss_sent,
+                        feed_name,
+                    )
                 _update_feed_stats(feed_stats, feed_url, rss_sent)
 
         try:
@@ -285,8 +307,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Saving seen URLs failed: %s", e)
         coordinator.async_set_updated_data(feed_stats)
 
-    # Run once right away, then at the top of every hour (cron: minute=0, second=0)
-    hass.async_create_task(_poll_feeds())
+    # Run once after a short delay (so new entry options are committed), then at the top of every hour
+    async def _first_poll(_now: Any) -> None:
+        await _poll_feeds()
+    async_call_later(hass, 2.0, _first_poll)
     remove = async_track_utc_time_change(hass, _poll_feeds, minute=0, second=0)
     entry.async_on_unload(remove)
 
