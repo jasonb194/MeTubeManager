@@ -185,17 +185,14 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                     _LOGGER.warning("MeTube Manager: failed to save pruned data: %s", e)
 
             add_url = base_url.rstrip("/") + "/add"
-            start_url = base_url.rstrip("/") + "/start"
-            # Payload for MeTube: url, quality, format; auto_start so downloads begin
+            # Payload for MeTube: url, quality, format (add alone is enough; MeTube queues and starts)
             def _metube_add_payload(link: str) -> dict[str, Any]:
                 return {
                     "url": link,
                     "quality": quality,
                     "format": "mp4",
-                    "auto_start": True,
                 }
 
-            total_added = 0
             async with aiohttp.ClientSession() as session:
                 for feed in feeds:
                     feed_url = feed["url"]
@@ -246,7 +243,6 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             if add_resp.status in (200, 201):
                                                 _LOGGER.debug("Sent to MeTube (RSS backlog): %s", link)
                                                 backlog_sent += 1
-                                                total_added += 1
                                             else:
                                                 body = await add_resp.text()
                                                 _LOGGER.warning(
@@ -305,7 +301,6 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             if add_resp.status in (200, 201):
                                                 _LOGGER.debug("Sent to MeTube (backlog): %s", link)
                                                 backlog_sent += 1
-                                                total_added += 1
                                             else:
                                                 body = await add_resp.text()
                                                 _LOGGER.warning(
@@ -387,7 +382,6 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                 if add_resp.status in (200, 201):
                                     _LOGGER.debug("Sent to MeTube: %s", link)
                                     rss_sent += 1
-                                    total_added += 1
                                 else:
                                     body = await add_resp.text()
                                     _LOGGER.warning(
@@ -405,25 +399,6 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                             feed_name,
                         )
                     _metube_update_feed_stats(feed_stats, feed_url, rss_sent)
-
-                # Tell MeTube to start the queue so added items actually download
-                if total_added > 0:
-                    try:
-                        async with session.post(
-                            start_url,
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as start_resp:
-                            if start_resp.status not in (200, 201, 204):
-                                body = await start_resp.text()
-                                _LOGGER.warning(
-                                    "MeTube /start returned %s: %s",
-                                    start_resp.status,
-                                    body[:200],
-                                )
-                            else:
-                                _LOGGER.debug("MeTube /start ok (%s items added)", total_added)
-                    except Exception as e:
-                        _LOGGER.warning("MeTube /start failed: %s", e)
 
             try:
                 await store.async_save({
