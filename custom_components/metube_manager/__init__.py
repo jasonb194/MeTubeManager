@@ -108,210 +108,228 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _poll_feeds(*_args: Any, **_kwargs: Any) -> None:
         """Fetch all RSS feeds, find new video URLs, send to MeTube."""
-        # Use latest entry from config store (important for newly added entries)
-        current_entry = hass.config_entries.async_get_entry(entry.entry_id)
-        if not current_entry:
-            return
-        options = current_entry.options or current_entry.data
-        raw_feeds = options.get(CONF_RSS_FEEDS) or []
-        feeds = [f for f in (_normalize_feed(x) for x in raw_feeds) if f]
-        base_url = (options.get(CONF_METUBE_URL) or current_entry.data.get(CONF_METUBE_URL) or "").rstrip("/")
-        quality = options.get(CONF_QUALITY) or current_entry.data.get(CONF_QUALITY) or DEFAULT_QUALITY
-
-        if not base_url or not feeds:
-            return
-
+        _LOGGER.info("MeTube Manager: poll started for entry %s", entry.entry_id)
         try:
-            seen_data = await store.async_load() or {}
-            seen: set[str] = set(seen_data.get("urls", []) or [])
-            backlog_done: set[str] = set(seen_data.get("backlog_done", []) or [])
-            feed_stats: dict[str, dict[str, Any]] = dict(seen_data.get("feed_stats") or {})
-        except Exception as e:
-            _LOGGER.warning("Loading seen URLs failed: %s", e)
-            seen = set()
-            backlog_done = set()
-            feed_stats = {}
+            # Use latest entry from config store (important for newly added entries)
+            current_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if not current_entry:
+                _LOGGER.warning("MeTube Manager: config entry %s not found, skipping poll", entry.entry_id)
+                return
+            options = current_entry.options or current_entry.data or {}
+            data = current_entry.data or {}
+            # Feeds can be in options (when set via create_entry) or in data (after options flow save)
+            raw_feeds = options.get(CONF_RSS_FEEDS) or data.get(CONF_RSS_FEEDS) or []
+            feeds = [f for f in (_normalize_feed(x) for x in raw_feeds) if f]
+            base_url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").rstrip("/")
+            quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
 
-        add_url = base_url.rstrip("/") + "/add"
+            if not base_url:
+                _LOGGER.warning("MeTube Manager: no MeTube URL configured, skipping poll")
+                return
+            if not feeds:
+                _LOGGER.warning(
+                    "MeTube Manager: no feeds configured (raw_feeds=%s), skipping poll",
+                    len(raw_feeds),
+                )
+                return
 
-        async with aiohttp.ClientSession() as session:
-            for feed in feeds:
-                feed_url = feed["url"]
-                feed_name = feed.get("name") or feed_url
-                backlog_playlist = (feed.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
+            _LOGGER.debug("MeTube Manager: polling %s feed(s), base_url=%s", len(feeds), base_url)
 
-                # One-time backlog: generate URL from feed (YouTube playlist or RSS feed)
-                backlog_sent = 0
-                if backlog_playlist and feed_url not in backlog_done:
-                    if backlog_playlist == feed_url:
-                        # RSS backlog: fetch feed and send all current items once
-                        _LOGGER.info("Fetching RSS backlog for %s", feed_name)
-                        try:
-                            async with session.get(
-                                feed_url,
-                                timeout=aiohttp.ClientTimeout(total=30),
-                                headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
-                            ) as resp:
-                                if resp.status != 200:
-                                    raise OSError(f"RSS returned {resp.status}")
-                                text = await resp.text()
-                            parsed = await hass.async_add_executor_job(feedparser.parse, text)
-                            for item in getattr(parsed, "entries", []) or []:
-                                link = (item.get("link") or "").strip()
-                                if not link or link in seen:
-                                    continue
-                                seen.add(link)
-                                try:
-                                    async with session.post(
-                                        add_url,
-                                        json={"url": link, "quality": quality, "format": "mp4"},
-                                        timeout=aiohttp.ClientTimeout(total=30),
-                                    ) as add_resp:
-                                        if add_resp.status in (200, 201):
-                                            _LOGGER.debug("Sent to MeTube (RSS backlog): %s", link)
-                                            backlog_sent += 1
-                                except Exception as e:
-                                    _LOGGER.warning("MeTube /add failed for %s: %s", link, e)
-                            backlog_done.add(feed_url)
-                            if backlog_sent:
-                                _LOGGER.info(
-                                    "MeTube Manager: sent %s video(s) from RSS backlog for %s",
-                                    backlog_sent,
-                                    feed_name,
+            try:
+                seen_data = await store.async_load() or {}
+                seen: set[str] = set(seen_data.get("urls", []) or [])
+                backlog_done: set[str] = set(seen_data.get("backlog_done", []) or [])
+                feed_stats: dict[str, dict[str, Any]] = dict(seen_data.get("feed_stats") or {})
+            except Exception as e:
+                _LOGGER.warning("Loading seen URLs failed: %s", e)
+                seen = set()
+                backlog_done = set()
+                feed_stats = {}
+
+            add_url = base_url.rstrip("/") + "/add"
+
+            async with aiohttp.ClientSession() as session:
+                for feed in feeds:
+                    feed_url = feed["url"]
+                    feed_name = feed.get("name") or feed_url
+                    backlog_playlist = (feed.get(CONF_BACKLOG_PLAYLIST_URL) or "").strip()
+
+                    # One-time backlog: generate URL from feed (YouTube playlist or RSS feed)
+                    backlog_sent = 0
+                    if backlog_playlist and feed_url not in backlog_done:
+                        if backlog_playlist == feed_url:
+                            # RSS backlog: fetch feed and send all current items once
+                            _LOGGER.info("Fetching RSS backlog for %s", feed_name)
+                            try:
+                                async with session.get(
+                                    feed_url,
+                                    timeout=aiohttp.ClientTimeout(total=30),
+                                    headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
+                                ) as resp:
+                                    if resp.status != 200:
+                                        raise OSError(f"RSS returned {resp.status}")
+                                    text = await resp.text()
+                                parsed = await hass.async_add_executor_job(feedparser.parse, text)
+                                for item in getattr(parsed, "entries", []) or []:
+                                    link = (item.get("link") or "").strip()
+                                    if not link or link in seen:
+                                        continue
+                                    seen.add(link)
+                                    try:
+                                        async with session.post(
+                                            add_url,
+                                            json={"url": link, "quality": quality, "format": "mp4"},
+                                            timeout=aiohttp.ClientTimeout(total=30),
+                                        ) as add_resp:
+                                            if add_resp.status in (200, 201):
+                                                _LOGGER.debug("Sent to MeTube (RSS backlog): %s", link)
+                                                backlog_sent += 1
+                                    except Exception as e:
+                                        _LOGGER.warning("MeTube /add failed for %s: %s", link, e)
+                                backlog_done.add(feed_url)
+                                if backlog_sent:
+                                    _LOGGER.info(
+                                        "MeTube Manager: sent %s video(s) from RSS backlog for %s",
+                                        backlog_sent,
+                                        feed_name,
+                                    )
+                            except Exception as e:
+                                _LOGGER.exception("RSS backlog failed for %s: %s", feed_name, e)
+                        else:
+                            # YouTube playlist: fetch via yt-dlp
+                            _LOGGER.info("Fetching backlog playlist for %s: %s", feed_name, backlog_playlist)
+                            try:
+                                playlist_urls = await hass.async_add_executor_job(
+                                    _yt_dlp_playlist_video_urls, backlog_playlist
                                 )
-                        except Exception as e:
-                            _LOGGER.exception("RSS backlog failed for %s: %s", feed_name, e)
-                    else:
-                        # YouTube playlist: fetch via yt-dlp
-                        _LOGGER.info("Fetching backlog playlist for %s: %s", feed_name, backlog_playlist)
-                        try:
-                            playlist_urls = await hass.async_add_executor_job(
-                                _yt_dlp_playlist_video_urls, backlog_playlist
-                            )
-                            for link in playlist_urls:
-                                if not link or link in seen:
-                                    continue
-                                seen.add(link)
-                                try:
-                                    async with session.post(
-                                        add_url,
-                                        json={
-                                            "url": link,
-                                            "quality": quality,
-                                            "format": "mp4",
-                                        },
-                                        timeout=aiohttp.ClientTimeout(total=30),
-                                    ) as add_resp:
-                                        if add_resp.status in (200, 201):
-                                            _LOGGER.debug("Sent to MeTube (backlog): %s", link)
-                                            backlog_sent += 1
-                                        else:
-                                            body = await add_resp.text()
-                                            _LOGGER.warning(
-                                                "MeTube /add failed for %s: %s %s",
-                                                link,
-                                                add_resp.status,
-                                                body[:200],
-                                            )
-                                except Exception as e:
-                                    _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
-                            backlog_done.add(feed_url)
-                            if backlog_sent:
-                                _LOGGER.info(
-                                    "MeTube Manager: sent %s video(s) from playlist backlog for %s",
-                                    backlog_sent,
-                                    feed_name,
-                                )
-                        except Exception as e:
-                            _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
-                _update_feed_stats(feed_stats, feed_url, backlog_sent)
+                                for link in playlist_urls:
+                                    if not link or link in seen:
+                                        continue
+                                    seen.add(link)
+                                    try:
+                                        async with session.post(
+                                            add_url,
+                                            json={
+                                                "url": link,
+                                                "quality": quality,
+                                                "format": "mp4",
+                                            },
+                                            timeout=aiohttp.ClientTimeout(total=30),
+                                        ) as add_resp:
+                                            if add_resp.status in (200, 201):
+                                                _LOGGER.debug("Sent to MeTube (backlog): %s", link)
+                                                backlog_sent += 1
+                                            else:
+                                                body = await add_resp.text()
+                                                _LOGGER.warning(
+                                                    "MeTube /add failed for %s: %s %s",
+                                                    link,
+                                                    add_resp.status,
+                                                    body[:200],
+                                                )
+                                    except Exception as e:
+                                        _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                                backlog_done.add(feed_url)
+                                if backlog_sent:
+                                    _LOGGER.info(
+                                        "MeTube Manager: sent %s video(s) from playlist backlog for %s",
+                                        backlog_sent,
+                                        feed_name,
+                                    )
+                            except Exception as e:
+                                _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
+                    _update_feed_stats(feed_stats, feed_url, backlog_sent)
 
-            for feed in feeds:
-                feed_url = feed["url"]
-                feed_name = feed.get("name") or feed_url
-                rss_sent = 0
-                if not feed_url:
-                    continue
-                try:
-                    resp = await session.get(
-                        feed_url,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                        headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
-                    )
-                    if resp.status != 200:
-                        _LOGGER.warning(
-                            "RSS feed %s (%s) returned %s",
-                            feed_name,
+                for feed in feeds:
+                    feed_url = feed["url"]
+                    feed_name = feed.get("name") or feed_url
+                    rss_sent = 0
+                    if not feed_url:
+                        continue
+                    try:
+                        resp = await session.get(
                             feed_url,
-                            resp.status,
+                            timeout=aiohttp.ClientTimeout(total=30),
+                            headers={"User-Agent": "MeTubeManager/1.0 (Home Assistant)"},
                         )
+                        if resp.status != 200:
+                            _LOGGER.warning(
+                                "RSS feed %s (%s) returned %s",
+                                feed_name,
+                                feed_url,
+                                resp.status,
+                            )
+                            _update_feed_stats(feed_stats, feed_url, 0)
+                            continue
+                        text = await resp.text()
+                    except Exception as e:
+                        _LOGGER.warning("Failed to fetch RSS %s (%s): %s", feed_name, feed_url, e)
                         _update_feed_stats(feed_stats, feed_url, 0)
                         continue
-                    text = await resp.text()
-                except Exception as e:
-                    _LOGGER.warning("Failed to fetch RSS %s (%s): %s", feed_name, feed_url, e)
-                    _update_feed_stats(feed_stats, feed_url, 0)
-                    continue
-
-                try:
-                    parsed = await hass.async_add_executor_job(feedparser.parse, text)
-                except Exception as e:
-                    _LOGGER.warning("Failed to parse RSS %s (%s): %s", feed_name, feed_url, e)
-                    _update_feed_stats(feed_stats, feed_url, 0)
-                    continue
-
-                for item in getattr(parsed, "entries", []) or []:
-                    link = (item.get("link") or "").strip()
-                    if not link or link in seen:
-                        continue
-                    seen.add(link)
 
                     try:
-                        async with session.post(
-                            add_url,
-                            json={
-                                "url": link,
-                                "quality": quality,
-                                "format": "mp4",
-                            },
-                            timeout=aiohttp.ClientTimeout(total=30),
-                        ) as add_resp:
-                            if add_resp.status in (200, 201):
-                                _LOGGER.debug("Sent to MeTube: %s", link)
-                                rss_sent += 1
-                            else:
-                                body = await add_resp.text()
-                                _LOGGER.warning(
-                                    "MeTube /add failed for %s: %s %s",
-                                    link,
-                                    add_resp.status,
-                                    body[:200],
-                                )
+                        parsed = await hass.async_add_executor_job(feedparser.parse, text)
                     except Exception as e:
-                        _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
-                if rss_sent:
-                    _LOGGER.info(
-                        "MeTube Manager: sent %s new video(s) from feed %s",
-                        rss_sent,
-                        feed_name,
-                    )
-                _update_feed_stats(feed_stats, feed_url, rss_sent)
+                        _LOGGER.warning("Failed to parse RSS %s (%s): %s", feed_name, feed_url, e)
+                        _update_feed_stats(feed_stats, feed_url, 0)
+                        continue
 
-        try:
-            await store.async_save({
-                "urls": list(seen),
-                "backlog_done": list(backlog_done),
-                "feed_stats": feed_stats,
-            })
+                    for item in getattr(parsed, "entries", []) or []:
+                        link = (item.get("link") or "").strip()
+                        if not link or link in seen:
+                            continue
+                        seen.add(link)
+
+                        try:
+                            async with session.post(
+                                add_url,
+                                json={
+                                    "url": link,
+                                    "quality": quality,
+                                    "format": "mp4",
+                                },
+                                timeout=aiohttp.ClientTimeout(total=30),
+                            ) as add_resp:
+                                if add_resp.status in (200, 201):
+                                    _LOGGER.debug("Sent to MeTube: %s", link)
+                                    rss_sent += 1
+                                else:
+                                    body = await add_resp.text()
+                                    _LOGGER.warning(
+                                        "MeTube /add failed for %s: %s %s",
+                                        link,
+                                        add_resp.status,
+                                        body[:200],
+                                    )
+                        except Exception as e:
+                            _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                    if rss_sent:
+                        _LOGGER.info(
+                            "MeTube Manager: sent %s new video(s) from feed %s",
+                            rss_sent,
+                            feed_name,
+                        )
+                    _update_feed_stats(feed_stats, feed_url, rss_sent)
+
+            try:
+                await store.async_save({
+                    "urls": list(seen),
+                    "backlog_done": list(backlog_done),
+                    "feed_stats": feed_stats,
+                })
+            except Exception as e:
+                _LOGGER.warning("Saving seen URLs failed: %s", e)
+            coordinator.async_set_updated_data(feed_stats)
+
         except Exception as e:
-            _LOGGER.warning("Saving seen URLs failed: %s", e)
-        coordinator.async_set_updated_data(feed_stats)
+            _LOGGER.exception("MeTube Manager: poll failed: %s", e)
 
     # Run once after a short delay (so new entry options are committed), then at the top of every hour
     async def _first_poll(_now: Any) -> None:
         await _poll_feeds()
-    async_call_later(hass, 2.0, _first_poll)
+    first_poll_cancel = async_call_later(hass, 2.0, _first_poll)
     remove = async_track_utc_time_change(hass, _poll_feeds, minute=0, second=0)
+    entry.async_on_unload(first_poll_cancel)
     entry.async_on_unload(remove)
 
     # Reload when options change (add/remove feeds) so sensor list stays in sync
