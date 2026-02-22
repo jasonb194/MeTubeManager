@@ -164,6 +164,26 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                 backlog_done = set()
                 feed_stats = {}
 
+            # Prune data for removed channels (e.g. user edited config and removed a feed)
+            current_feed_urls = {f["url"] for f in feeds}
+            removed_feed_urls = (set(feed_stats.keys()) | backlog_done) - current_feed_urls
+            if removed_feed_urls:
+                _LOGGER.info(
+                    "MeTube Manager: removing stored data for %s removed channel(s)",
+                    len(removed_feed_urls),
+                )
+                feed_stats = {k: v for k, v in feed_stats.items() if k in current_feed_urls}
+                backlog_done = backlog_done & current_feed_urls
+                seen = set()  # Clear seen URLs so removed channel's history is not kept
+                try:
+                    await store.async_save({
+                        "urls": [],
+                        "backlog_done": list(backlog_done),
+                        "feed_stats": feed_stats,
+                    })
+                except Exception as e:
+                    _LOGGER.warning("MeTube Manager: failed to save pruned data: %s", e)
+
             add_url = base_url.rstrip("/") + "/add"
 
             async with aiohttp.ClientSession() as session:
@@ -373,8 +393,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove a config entry and delete all stored data (seen URLs, backlog state)."""
-    store_key = f"{DOMAIN}_{entry.entry_id}_{STORAGE_KEY}"
-    store = Store(hass, STORAGE_VERSION, store_key)
+    """Remove a config entry and delete all stored data (seen URLs, backlog state, feed_stats)."""
+    store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}_{STORAGE_KEY}")
     await store.async_remove()
-    _LOGGER.debug("Removed storage for MeTube Manager entry %s", entry.entry_id)
+    _LOGGER.info(
+        "MeTube Manager: removed all stored data for deleted entry %s (channel data cleared)",
+        entry.entry_id,
+    )
