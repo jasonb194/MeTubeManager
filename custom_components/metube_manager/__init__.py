@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -189,6 +190,9 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
             def _metube_add_payload(link: str) -> dict[str, Any]:
                 return {"url": link, "quality": quality}
 
+            # Send one video at a time: one POST per URL, wait for response, then brief delay before next
+            DELAY_BETWEEN_ADD_SECONDS = 1.0
+
             async with aiohttp.ClientSession() as session:
                 for feed in feeds:
                     feed_url = feed["url"]
@@ -237,8 +241,14 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             timeout=aiohttp.ClientTimeout(total=30),
                                         ) as add_resp:
                                             body = await add_resp.text()
+                                            payload = _metube_add_payload(link)
+                                            _LOGGER.info(
+                                                "MeTube /add (RSS backlog): payload=%s response_status=%s response_body=%s",
+                                                payload,
+                                                add_resp.status,
+                                                (body or "")[:500],
+                                            )
                                             if add_resp.status in (200, 201):
-                                                _LOGGER.debug("MeTube /add ok (RSS backlog): %s -> %s", link[:50], body[:100] if body else "")
                                                 backlog_sent += 1
                                             else:
                                                 _LOGGER.warning(
@@ -249,6 +259,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                                 )
                                     except Exception as e:
                                         _LOGGER.warning("MeTube /add failed for %s: %s", link, e)
+                                    await asyncio.sleep(DELAY_BETWEEN_ADD_SECONDS)
                                 backlog_done.add(feed_url)
                                 if backlog_sent:
                                     _LOGGER.warning(
@@ -295,8 +306,14 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             timeout=aiohttp.ClientTimeout(total=30),
                                         ) as add_resp:
                                             body = await add_resp.text()
+                                            payload = _metube_add_payload(link)
+                                            _LOGGER.info(
+                                                "MeTube /add (playlist backlog): payload=%s response_status=%s response_body=%s",
+                                                payload,
+                                                add_resp.status,
+                                                (body or "")[:500],
+                                            )
                                             if add_resp.status in (200, 201):
-                                                _LOGGER.debug("MeTube /add ok (backlog): %s -> %s", link[:50], body[:100] if body else "")
                                                 backlog_sent += 1
                                             else:
                                                 _LOGGER.warning(
@@ -307,6 +324,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                                 )
                                     except Exception as e:
                                         _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                                    await asyncio.sleep(DELAY_BETWEEN_ADD_SECONDS)
                                 backlog_done.add(feed_url)
                                 if backlog_sent:
                                     _LOGGER.warning(
@@ -376,8 +394,14 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                 timeout=aiohttp.ClientTimeout(total=30),
                             ) as add_resp:
                                 body = await add_resp.text()
+                                payload = _metube_add_payload(link)
+                                _LOGGER.info(
+                                    "MeTube /add (RSS): payload=%s response_status=%s response_body=%s",
+                                    payload,
+                                    add_resp.status,
+                                    (body or "")[:500],
+                                )
                                 if add_resp.status in (200, 201):
-                                    _LOGGER.debug("MeTube /add ok: %s -> %s", link[:50], body[:100] if body else "")
                                     rss_sent += 1
                                 else:
                                     _LOGGER.warning(
@@ -388,6 +412,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                     )
                         except Exception as e:
                             _LOGGER.warning("MeTube /add request failed for %s: %s", link, e)
+                        await asyncio.sleep(DELAY_BETWEEN_ADD_SECONDS)
                     if rss_sent:
                         _LOGGER.info(
                             "MeTube Manager: sent %s new video(s) from feed %s",
