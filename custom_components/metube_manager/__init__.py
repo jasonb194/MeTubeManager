@@ -242,7 +242,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                         ) as add_resp:
                                             body = await add_resp.text()
                                             payload = _metube_add_payload(link)
-                                            _LOGGER.info(
+                                            _LOGGER.warning(
                                                 "MeTube /add (RSS backlog): payload=%s response_status=%s response_body=%s",
                                                 payload,
                                                 add_resp.status,
@@ -307,7 +307,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                         ) as add_resp:
                                             body = await add_resp.text()
                                             payload = _metube_add_payload(link)
-                                            _LOGGER.info(
+                                            _LOGGER.warning(
                                                 "MeTube /add (playlist backlog): payload=%s response_status=%s response_body=%s",
                                                 payload,
                                                 add_resp.status,
@@ -395,7 +395,7 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                             ) as add_resp:
                                 body = await add_resp.text()
                                 payload = _metube_add_payload(link)
-                                _LOGGER.info(
+                                _LOGGER.warning(
                                     "MeTube /add (RSS): payload=%s response_status=%s response_body=%s",
                                     payload,
                                     add_resp.status,
