@@ -28,6 +28,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+# Log at WARNING so it appears without logger config; confirms module was imported
+_LOGGER.warning("MeTube Manager: custom_components.metube_manager module loaded")
 
 
 def _yt_dlp_playlist_video_urls(playlist_url: str) -> list[str]:
@@ -60,14 +62,30 @@ def _yt_dlp_playlist_video_urls(playlist_url: str) -> list[str]:
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the MeTube Manager domain."""
+    _LOGGER.warning("MeTube Manager: async_setup (domain load) called")
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MeTube Manager from a config entry."""
+    _LOGGER.warning(
+        "MeTube Manager: async_setup_entry called for entry_id=%s title=%s",
+        entry.entry_id,
+        getattr(entry, "title", ""),
+    )
+    try:
+        await _metube_setup_entry_impl(hass, entry)
+        return True
+    except Exception as e:
+        _LOGGER.exception("MeTube Manager: setup failed: %s", e)
+        return False
+
+
+async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Inner setup logic so we can catch exceptions in async_setup_entry."""
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}_{STORAGE_KEY}")
 
-    async def _load_feed_stats() -> dict[str, Any]:
+    async def _metube_load_feed_stats() -> dict[str, Any]:
         """Load feed_stats from store for coordinator."""
         data = await store.async_load() or {}
         return data.get("feed_stats") or {}
@@ -75,13 +93,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = DataUpdateCoordinator(
         hass,
         logging.getLogger(__name__),
-        name=DOMAIN,
-        update_method=_load_feed_stats,
+        name=f"{DOMAIN}_feeds",
+        update_method=_metube_load_feed_stats,
     )
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    def _update_feed_stats(
+    def _metube_update_feed_stats(
         stats: dict[str, dict[str, Any]], feed_url: str, sent_count: int = 0
     ) -> None:
         """Update feed_stats for a feed with last_fetched and total_sent."""
@@ -90,7 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         total = (prev.get("total_sent") or 0) + sent_count
         stats[feed_url] = {"last_fetched": now, "total_sent": total}
 
-    def _normalize_feed(f: Any) -> dict[str, Any] | None:
+    def _metube_normalize_feed(f: Any) -> dict[str, Any] | None:
         """Return {url, name, backlog_playlist_url?} from feed item (dict or legacy string)."""
         if isinstance(f, dict):
             url = (f.get(CONF_FEED_URL) or "").strip()
@@ -106,9 +124,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return {"url": f.strip(), "name": f.strip()}
         return None
 
-    async def _poll_feeds(*_args: Any, **_kwargs: Any) -> None:
+    async def _metube_poll_feeds(*_args: Any, **_kwargs: Any) -> None:
         """Fetch all RSS feeds, find new video URLs, send to MeTube."""
-        _LOGGER.info("MeTube Manager: poll started for entry %s", entry.entry_id)
+        _LOGGER.warning("MeTube Manager: poll started for entry %s", entry.entry_id)
         try:
             # Use latest entry from config store (important for newly added entries)
             current_entry = hass.config_entries.async_get_entry(entry.entry_id)
@@ -119,7 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data = current_entry.data or {}
             # Feeds can be in options (when set via create_entry) or in data (after options flow save)
             raw_feeds = options.get(CONF_RSS_FEEDS) or data.get(CONF_RSS_FEEDS) or []
-            feeds = [f for f in (_normalize_feed(x) for x in raw_feeds) if f]
+            feeds = [f for f in (_metube_normalize_feed(x) for x in raw_feeds) if f]
             base_url = (options.get(CONF_METUBE_URL) or data.get(CONF_METUBE_URL) or "").rstrip("/")
             quality = options.get(CONF_QUALITY) or data.get(CONF_QUALITY) or DEFAULT_QUALITY
 
@@ -238,7 +256,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     )
                             except Exception as e:
                                 _LOGGER.exception("Backlog fetch failed for %s: %s", feed_name, e)
-                    _update_feed_stats(feed_stats, feed_url, backlog_sent)
+                    _metube_update_feed_stats(feed_stats, feed_url, backlog_sent)
 
                 for feed in feeds:
                     feed_url = feed["url"]
@@ -259,19 +277,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 feed_url,
                                 resp.status,
                             )
-                            _update_feed_stats(feed_stats, feed_url, 0)
+                            _metube_update_feed_stats(feed_stats, feed_url, 0)
                             continue
                         text = await resp.text()
                     except Exception as e:
                         _LOGGER.warning("Failed to fetch RSS %s (%s): %s", feed_name, feed_url, e)
-                        _update_feed_stats(feed_stats, feed_url, 0)
+                        _metube_update_feed_stats(feed_stats, feed_url, 0)
                         continue
 
                     try:
                         parsed = await hass.async_add_executor_job(feedparser.parse, text)
                     except Exception as e:
                         _LOGGER.warning("Failed to parse RSS %s (%s): %s", feed_name, feed_url, e)
-                        _update_feed_stats(feed_stats, feed_url, 0)
+                        _metube_update_feed_stats(feed_stats, feed_url, 0)
                         continue
 
                     for item in getattr(parsed, "entries", []) or []:
@@ -309,7 +327,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             rss_sent,
                             feed_name,
                         )
-                    _update_feed_stats(feed_stats, feed_url, rss_sent)
+                    _metube_update_feed_stats(feed_stats, feed_url, rss_sent)
 
             try:
                 await store.async_save({
@@ -325,12 +343,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.exception("MeTube Manager: poll failed: %s", e)
 
     # Run once after a short delay (so new entry options are committed), then at the top of every hour
-    async def _first_poll(_now: Any) -> None:
-        await _poll_feeds()
-    first_poll_cancel = async_call_later(hass, 2.0, _first_poll)
-    remove = async_track_utc_time_change(hass, _poll_feeds, minute=0, second=0)
+    async def _metube_first_poll(_now: Any) -> None:
+        await _metube_poll_feeds()
+    _LOGGER.warning("MeTube Manager: scheduling first poll in 2s and hourly at :00")
+    first_poll_cancel = async_call_later(hass, 2.0, _metube_first_poll)
+    remove_metube_poll = async_track_utc_time_change(hass, _metube_poll_feeds, minute=0, second=0)
     entry.async_on_unload(first_poll_cancel)
-    entry.async_on_unload(remove)
+    entry.async_on_unload(remove_metube_poll)
 
     # Reload when options change (add/remove feeds) so sensor list stays in sync
     entry.async_on_unload(entry.add_update_listener(lambda _hass, _entry: _hass.config_entries.async_reload(_entry.entry_id)))
@@ -344,8 +363,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await ensure_dashboard(hass)
     except Exception as e:
         _LOGGER.warning("Could not create MeTube Manager dashboard: %s", e)
-
-    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
