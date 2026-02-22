@@ -185,13 +185,9 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                     _LOGGER.warning("MeTube Manager: failed to save pruned data: %s", e)
 
             add_url = base_url.rstrip("/") + "/add"
-            # Payload for MeTube: url, quality, format (add alone is enough; MeTube queues and starts)
+            # Payload must match MeTube API: only "url" and "quality" (see README bookmarklet)
             def _metube_add_payload(link: str) -> dict[str, Any]:
-                return {
-                    "url": link,
-                    "quality": quality,
-                    "format": "mp4",
-                }
+                return {"url": link, "quality": quality}
 
             async with aiohttp.ClientSession() as session:
                 for feed in feeds:
@@ -240,11 +236,11 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             json=_metube_add_payload(link),
                                             timeout=aiohttp.ClientTimeout(total=30),
                                         ) as add_resp:
+                                            body = await add_resp.text()
                                             if add_resp.status in (200, 201):
-                                                _LOGGER.debug("Sent to MeTube (RSS backlog): %s", link)
+                                                _LOGGER.debug("MeTube /add ok (RSS backlog): %s -> %s", link[:50], body[:100] if body else "")
                                                 backlog_sent += 1
                                             else:
-                                                body = await add_resp.text()
                                                 _LOGGER.warning(
                                                     "MeTube /add failed for %s: %s %s",
                                                     link,
@@ -298,11 +294,11 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                             json=_metube_add_payload(link),
                                             timeout=aiohttp.ClientTimeout(total=30),
                                         ) as add_resp:
+                                            body = await add_resp.text()
                                             if add_resp.status in (200, 201):
-                                                _LOGGER.debug("Sent to MeTube (backlog): %s", link)
+                                                _LOGGER.debug("MeTube /add ok (backlog): %s -> %s", link[:50], body[:100] if body else "")
                                                 backlog_sent += 1
                                             else:
-                                                body = await add_resp.text()
                                                 _LOGGER.warning(
                                                     "MeTube /add failed for %s: %s %s",
                                                     link,
@@ -379,11 +375,11 @@ async def _metube_setup_entry_impl(hass: HomeAssistant, entry: ConfigEntry) -> N
                                 json=_metube_add_payload(link),
                                 timeout=aiohttp.ClientTimeout(total=30),
                             ) as add_resp:
+                                body = await add_resp.text()
                                 if add_resp.status in (200, 201):
-                                    _LOGGER.debug("Sent to MeTube: %s", link)
+                                    _LOGGER.debug("MeTube /add ok: %s -> %s", link[:50], body[:100] if body else "")
                                     rss_sent += 1
                                 else:
-                                    body = await add_resp.text()
                                     _LOGGER.warning(
                                         "MeTube /add failed for %s: %s %s",
                                         link,
