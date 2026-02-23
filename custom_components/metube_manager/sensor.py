@@ -131,7 +131,7 @@ class MeTubeManagerFeedSensor(CoordinatorEntity, SensorEntity):
         slug = _slug(self._feed_name)
         url_hash = hashlib.md5(feed_url.encode()).hexdigest()[:10]
         self._attr_unique_id = f"{entry.entry_id}_feed_{slug}_{url_hash}"
-        self._attr_name = self._feed_name
+        self._attr_name = "Videos downloaded"  # Device name is feed/channel name; avoid duplicating it
         device_id = _feed_device_id(feed_url)
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{entry.entry_id}_{device_id}")},
